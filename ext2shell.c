@@ -4,13 +4,22 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define SUPERBLOCK_OFFSET 1024
 #define EXT2_SUPER_MAGIC 0xEF53
 
+#define EXT2_FT_UNKNOWN  0
+#define EXT2_FT_REG_FILE 1
+#define EXT2_FT_DIR      2
+#define EXT2_FT_CHRDEV   3
+#define EXT2_FT_BLKDEV   4
+#define EXT2_FT_FIFO     5
+#define EXT2_FT_SOCK     6
+#define EXT2_FT_SYMLINK  7
+
 #pragma pack(push, 1)
-struct ext2_super_block
-{
+struct ext2_super_block {
     uint32_t s_inodes_count;
     uint32_t s_blocks_count;
     uint32_t s_r_blocks_count;
@@ -43,23 +52,23 @@ struct ext2_super_block
     uint32_t s_feature_compat;
     uint32_t s_feature_incompat;
     uint32_t s_feature_ro_compat;
-    uint8_t s_uuid[16];
-    char s_volume_name[16];
-    char s_last_mounted[64];
+    uint8_t  s_uuid[16];
+    char     s_volume_name[16];
+    char     s_last_mounted[64];
     uint32_t s_algorithm_usage_bitmap;
 
-    uint8_t s_prealloc_blocks;
-    uint8_t s_prealloc_dir_blocks;
+    uint8_t  s_prealloc_blocks;
+    uint8_t  s_prealloc_dir_blocks;
     uint16_t s_padding1;
 
-    uint8_t s_journal_uuid[16];
+    uint8_t  s_journal_uuid[16];
     uint32_t s_journal_inum;
     uint32_t s_journal_dev;
     uint32_t s_last_orphan;
 
     uint32_t s_hash_seed[4];
-    uint8_t s_def_hash_version;
-    uint8_t s_reserved_char_pad;
+    uint8_t  s_def_hash_version;
+    uint8_t  s_reserved_char_pad;
     uint16_t s_reserved_word_pad;
     uint32_t s_default_mount_opts;
     uint32_t s_first_meta_bg;
@@ -69,8 +78,7 @@ struct ext2_super_block
 #pragma pack(pop)
 
 #pragma pack(push, 1)
-struct ext2_inode
-{
+struct ext2_inode {
     uint16_t i_mode;
     uint16_t i_uid;
     uint32_t i_size;
@@ -88,19 +96,17 @@ struct ext2_inode
 #pragma pack(pop)
 
 #pragma pack(push, 1)
-struct ext2_dir_entry
-{
+struct ext2_dir_entry {
     uint32_t inode;
     uint16_t rec_len;
-    uint8_t name_len;
-    uint8_t file_type;
-    char name[];
+    uint8_t  name_len;
+    uint8_t  file_type;
+    char     name[];
 };
 #pragma pack(pop)
 
 #pragma pack(push, 1)
-struct ext2_group_desc
-{
+struct ext2_group_desc {
     uint32_t bg_block_bitmap;
     uint32_t bg_inode_bitmap;
     uint32_t bg_inode_table;
@@ -108,7 +114,7 @@ struct ext2_group_desc
     uint16_t bg_free_inodes_count;
     uint16_t bg_used_dirs_count;
     uint16_t bg_pad;
-    uint8_t bg_reserved[12];
+    uint8_t  bg_reserved[12];
 };
 #pragma pack(pop)
 
@@ -119,33 +125,30 @@ struct ext2_super_block superblock;
 struct ext2_group_desc group_desc;
 FILE *img = NULL;
 
-uint32_t get_block_size()
-{
+char current_path[1024] = "/";
+
+uint32_t get_block_size() {
     return 1024; // fixo conforme especificação
 }
 
-void read_superblock()
-{
+void read_superblock() {
     fseek(img, SUPERBLOCK_OFFSET, SEEK_SET);
     fread(&superblock, sizeof(struct ext2_super_block), 1, img);
 
-    if (superblock.s_magic != EXT2_SUPER_MAGIC)
-    {
+    if (superblock.s_magic != EXT2_SUPER_MAGIC) {
         fprintf(stderr, "[ERRO] Imagem fornecida não é EXT2\n");
         exit(1);
     }
 }
 
-void read_group_desc()
-{
+void read_group_desc() {
     uint32_t block_size = get_block_size();
     uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
     fseek(img, gdt_offset, SEEK_SET);
     fread(&group_desc, sizeof(struct ext2_group_desc), 1, img);
 }
 
-void read_inode(uint32_t inode_num, struct ext2_inode *inode_out)
-{
+void read_inode(uint32_t inode_num, struct ext2_inode *inode_out) {
     uint32_t block_size = get_block_size();
     uint32_t inodes_per_group = superblock.s_inodes_per_group;
     uint32_t inode_size = superblock.s_inode_size;
@@ -167,8 +170,8 @@ void read_inode(uint32_t inode_num, struct ext2_inode *inode_out)
     fread(inode_out, inode_size, 1, img);
 }
 
-void cmd_info()
-{
+
+void cmd_info() {
     uint32_t block_size = get_block_size();
     uint64_t image_size_bytes = (uint64_t)superblock.s_blocks_count * block_size;
     uint64_t free_space_kib = (uint64_t)superblock.s_free_blocks_count * block_size / 1024;
@@ -188,15 +191,13 @@ void cmd_info()
     printf("Inodetable size.: %u blocks\n", inodetable_blocks);
 }
 
-void cmd_ls()
-{
+void cmd_ls() {
     uint32_t block_size = get_block_size();
     char block[1024];
 
     printf("[/]$> ls\n\n");
 
-    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++)
-    {
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
         uint32_t block_num = current_inode.i_block[b];
         uint32_t offset_in_img = block_num * block_size;
 
@@ -204,8 +205,7 @@ void cmd_ls()
         fread(block, block_size, 1, img);
 
         uint32_t offset = 0;
-        while (offset < block_size)
-        {
+        while (offset < block_size) {
             struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
 
             if (entry->inode == 0 || entry->rec_len < 8 || offset + entry->rec_len > block_size)
@@ -217,7 +217,8 @@ void cmd_ls()
 
             // Tradução de tipo
             const char *file_types[] = {
-                "Unknown", "Regular", "Directory", "CharDev", "BlockDev", "FIFO", "Socket", "Symlink"};
+                "Unknown", "Regular", "Directory", "CharDev", "BlockDev", "FIFO", "Socket", "Symlink"
+            };
             const char *ftype = "Unknown";
             if (entry->file_type < 8)
                 ftype = file_types[entry->file_type];
@@ -235,25 +236,35 @@ void cmd_ls()
     }
 }
 
-void scan_possible_directories()
-{
+void get_permission_string(uint16_t mode, uint8_t file_type, char *out) {
+    out[0] = (file_type == EXT2_FT_DIR) ? 'd' : 'f'; // d = diretório, f = arquivo
+    out[1] = (mode & 0400) ? 'r' : '-';
+    out[2] = (mode & 0200) ? 'w' : '-';
+    out[3] = (mode & 0100) ? 'x' : '-';
+    out[4] = (mode & 0040) ? 'r' : '-';
+    out[5] = (mode & 0020) ? 'w' : '-';
+    out[6] = (mode & 0010) ? 'x' : '-';
+    out[7] = (mode & 0004) ? 'r' : '-';
+    out[8] = (mode & 0002) ? 'w' : '-';
+    out[9] = (mode & 0001) ? 'x' : '-';
+    out[10] = '\0';
+}
+
+
+void scan_possible_directories() {
     printf("== Verificando inodes 2 a 50 ==\n");
 
-    for (uint32_t i = 2; i <= 50; i++)
-    {
+    for (uint32_t i = 2; i <= 50; i++) {
         struct ext2_inode inode;
         read_inode(i, &inode);
 
-        if ((inode.i_mode & 0xF000) == 0x4000)
-        {
+        if ((inode.i_mode & 0xF000) == 0x4000) {
             printf("[Inode %2u] Diretório encontrado!\n", i);
             printf("  i_mode: 0x%04x\n", inode.i_mode);
             printf("  i_size: %u bytes\n", inode.i_size);
             printf("  Blocos diretos:\n");
-            for (int j = 0; j < 12; j++)
-            {
-                if (inode.i_block[j] != 0)
-                {
+            for (int j = 0; j < 12; j++) {
+                if (inode.i_block[j] != 0) {
                     printf("    - i_block[%d] = %u\n", j, inode.i_block[j]);
                 }
             }
@@ -261,54 +272,106 @@ void scan_possible_directories()
     }
 }
 
-void shell_loop()
-{
+void cmd_pwd() {
+    printf("%s\n", current_path);
+}
+
+void cmd_attr(const char *filename) {
+    uint32_t block_size = get_block_size();
+    char block[1024];
+
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+        uint32_t block_num = current_inode.i_block[b];
+        uint32_t offset_in_img = block_num * block_size;
+
+        fseek(img, offset_in_img, SEEK_SET);
+        fread(block, block_size, 1, img);
+
+        uint32_t offset = 0;
+        while (offset < block_size) {
+            struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+
+            if (entry->inode == 0 || entry->rec_len < 8) break;
+
+            char name[256] = {0};
+            memcpy(name, entry->name, entry->name_len);
+            name[entry->name_len] = '\0';
+
+            if (strcmp(name, filename) == 0) {
+                struct ext2_inode inode;
+                read_inode(entry->inode, &inode);
+
+                // Cabeçalho formatado
+                printf("%-12s %-4s %-4s %-12s %s\n", "permissões", "uid", "gid", "tamanho", "modificado em");
+
+                // Permissões
+                char perms[11] = {0};
+                get_permission_string(inode.i_mode, entry->file_type, perms);
+
+                // Tamanho formatado
+                char size_str[16];
+                if (inode.i_size < 1024)
+                    snprintf(size_str, sizeof(size_str), "%u B", inode.i_size);
+                else
+                    snprintf(size_str, sizeof(size_str), "%.1f KiB", inode.i_size / 1024.0);
+
+                // Data formatada
+                time_t mtime = inode.i_mtime;
+                struct tm *tm_info = localtime(&mtime);
+                char datebuf[20];
+                strftime(datebuf, sizeof(datebuf), "%d/%m/%Y %H:%M", tm_info);
+
+                // Linha de dados formatada
+                printf("%-12s %-4u %-4u %-12s %s\n",
+                    perms, inode.i_uid, inode.i_gid, size_str, datebuf);
+
+                return;
+            }
+
+            offset += entry->rec_len;
+        }
+    }
+
+    printf("Arquivo '%s' não encontrado.\n", filename);
+}
+
+void shell_loop() {
     char command[128];
 
-    while (1)
-    {
+    while (1) {
         printf("ext2shell:[/] $ ");
         fflush(stdout);
 
-        if (!fgets(command, sizeof(command), stdin))
-            break;
+        if (!fgets(command, sizeof(command), stdin)) break;
 
         command[strcspn(command, "\n")] = 0;
 
-        if (strcmp(command, "info") == 0)
-        {
+        if (strcmp(command, "info") == 0) {
             cmd_info();
-        }
-        else if (strcmp(command, "ls") == 0)
-        {
+        } else if (strcmp(command, "ls") == 0) {
             cmd_ls();
-        }
-        else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0)
-        {
+        } else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
             break;
-        }
-        else if (strcmp(command, "scan") == 0)
-        {
-            scan_possible_directories();
-        }
-        else
-        {
+        } else if (strcmp(command, "scan") == 0) {
+    scan_possible_directories();
+        } else if (strncmp(command, "attr ", 5) == 0) {
+    cmd_attr(command + 5);
+        } else if (strcmp(command, "pwd") == 0) {
+    cmd_pwd();
+        } else {
             printf("Comando desconhecido: %s\n", command);
         }
     }
 }
 
-int main(int argc, char *argv[])
-{
-    if (argc != 2)
-    {
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
         fprintf(stderr, "Uso: %s <imagem_ext2>\n", argv[0]);
         return 1;
     }
 
     img = fopen(argv[1], "rb");
-    if (!img)
-    {
+    if (!img) {
         perror("Erro ao abrir imagem");
         return 1;
     }
@@ -318,6 +381,7 @@ int main(int argc, char *argv[])
     read_inode(2, &current_inode);
     printf("[DEBUG] Inode 2 - i_mode: 0x%04x\n", current_inode.i_mode);
     printf("[DEBUG] Inode 2 - i_block[0]: %u\n", current_inode.i_block[0]);
+
 
     shell_loop();
 
