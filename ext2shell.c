@@ -306,7 +306,7 @@ void cmd_attr(const char *filename) {
 
                 // Permissões
                 char perms[11] = {0};
-                get_permission_string(inode.i_mode, entry->file_type, perms);
+                get_permission_string(inode.i_mode, entry->file_type, perms); // você pode usar sua print_permissions adaptada
 
                 // Tamanho formatado
                 char size_str[16];
@@ -335,11 +335,208 @@ void cmd_attr(const char *filename) {
     printf("Arquivo '%s' não encontrado.\n", filename);
 }
 
+void cmd_cd(const char *dirname) {
+    uint32_t block_size = get_block_size();
+    char block[1024];
+
+     // Tratamento especial para cd ..
+    if (strcmp(dirname, "..") == 0) {
+        if (strcmp(current_path, "/") == 0) {
+            // Já estamos na raiz, nada a fazer
+            return;
+        }
+
+        // Remove o último diretório do caminho
+        char *last_slash = strrchr(current_path, '/');
+        if (last_slash != NULL && last_slash != current_path) {
+            *last_slash = '\0';  // Ex: "/imagens" vira "/"
+        } else {
+            strcpy(current_path, "/"); // Se chegar aqui, volta para raiz
+        }
+
+        // Agora ler a entrada ".." do diretório atual (antes de mudar o inode)
+        // Para isso precisamos do inode atual, que corresponde ao diretório filho (antes do ..)
+        // Portanto vamos procurar ".." no bloco do inode atual.
+
+        // Ler os blocos do diretório atual (antes de mudar o inode)
+        for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+            uint32_t block_num = current_inode.i_block[b];
+            fseek(img, block_num * block_size, SEEK_SET);
+            fread(block, block_size, 1, img);
+
+            uint32_t offset = 0;
+            while (offset < block_size) {
+                struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+
+                // Só comparar se entry->name_len == 2 e nome == ".."
+                if (entry->inode != 0 &&
+                    entry->name_len == 2 &&
+                    strncmp(entry->name, "..", 2) == 0) {
+                    
+                    // Atualiza o inode atual para o pai
+                    current_inode_num = entry->inode;
+                    read_inode(current_inode_num, &current_inode);
+                    return;
+                }
+
+                offset += entry->rec_len;
+            }
+        }
+
+        // Se não achou a entrada ".." (problema grave), mantém inode atual
+        return;
+    }
+
+    // Procurar o diretório informado
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+        uint32_t block_num = current_inode.i_block[b];
+        fseek(img, block_num * block_size, SEEK_SET);
+        fread(block, block_size, 1, img);
+
+        uint32_t offset = 0;
+        while (offset < block_size) {
+            struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+            if (entry->inode == 0) break;
+
+            char name[256] = {0};
+            memcpy(name, entry->name, entry->name_len);
+            name[entry->name_len] = '\0';
+
+            if (strcmp(name, dirname) == 0) {
+                if (entry->file_type != EXT2_FT_DIR) {
+                    printf("'%s' não é um diretório.\n", dirname);
+                    return;
+                }
+
+                // Atualizar inode atual
+                current_inode_num = entry->inode;
+                read_inode(current_inode_num, &current_inode);
+
+                // Atualizar caminho
+                if (strcmp(current_path, "/") != 0)
+                    strcat(current_path, "/");
+                strcat(current_path, dirname);
+
+                return;
+            }
+
+            offset += entry->rec_len;
+        }
+    }
+
+    printf("Diretório '%s' não encontrado.\n", dirname);
+}
+
+
+void cmd_cat(const char *filename) {
+    uint32_t block_size = get_block_size();
+    char block[1024];
+
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+        uint32_t block_num = current_inode.i_block[b];
+        uint32_t offset_in_img = block_num * block_size;
+
+        fseek(img, offset_in_img, SEEK_SET);
+        fread(block, block_size, 1, img);
+
+        uint32_t offset = 0;
+        while (offset < block_size) {
+            struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+
+            if (entry->inode == 0 || entry->rec_len < 8) break;
+
+            char name[256] = {0};
+            memcpy(name, entry->name, entry->name_len);
+            name[entry->name_len] = '\0';
+
+            if (strcmp(name, filename) == 0) {
+                struct ext2_inode file_inode;
+                read_inode(entry->inode, &file_inode);
+
+                uint32_t bytes_remaining = file_inode.i_size;
+
+                // Diretos
+                for (int i = 0; i < 12 && bytes_remaining > 0; i++) {
+                    if (file_inode.i_block[i] == 0) continue;
+
+                    uint32_t data_block = file_inode.i_block[i];
+                    fseek(img, data_block * block_size, SEEK_SET);
+                    uint32_t to_read = bytes_remaining < block_size ? bytes_remaining : block_size;
+
+                    fread(block, 1, to_read, img);
+                    fwrite(block, 1, to_read, stdout);
+                    bytes_remaining -= to_read;
+                }
+
+                // Indireto simples
+                if (bytes_remaining > 0 && file_inode.i_block[12] != 0) {
+                    uint32_t *indirect_block = malloc(block_size);
+                    fseek(img, file_inode.i_block[12] * block_size, SEEK_SET);
+                    fread(indirect_block, 4, block_size / 4, img);
+
+                    for (int i = 0; i < 256 && bytes_remaining > 0; i++) {
+                        if (indirect_block[i] == 0) continue;
+
+                        fseek(img, indirect_block[i] * block_size, SEEK_SET);
+                        uint32_t to_read = bytes_remaining < block_size ? bytes_remaining : block_size;
+
+                        fread(block, 1, to_read, img);
+                        fwrite(block, 1, to_read, stdout);
+                        bytes_remaining -= to_read;
+                    }
+                    free(indirect_block);
+                }
+
+                // Indireto duplo
+                if (bytes_remaining > 0 && file_inode.i_block[13] != 0) {
+                    uint32_t *doubly_indirect_block = malloc(block_size);
+                    fseek(img, file_inode.i_block[13] * block_size, SEEK_SET);
+                    fread(doubly_indirect_block, 4, block_size / 4, img);
+
+                    for (int i = 0; i < 256 && bytes_remaining > 0; i++) {
+                        if (doubly_indirect_block[i] == 0) continue;
+
+                        uint32_t *indirect_block = malloc(block_size);
+                        fseek(img, doubly_indirect_block[i] * block_size, SEEK_SET);
+                        fread(indirect_block, 4, block_size / 4, img);
+
+                        for (int j = 0; j < 256 && bytes_remaining > 0; j++) {
+                            if (indirect_block[j] == 0) continue;
+
+                            fseek(img, indirect_block[j] * block_size, SEEK_SET);
+                            uint32_t to_read = bytes_remaining < block_size ? bytes_remaining : block_size;
+
+                            fread(block, 1, to_read, img);
+                            fwrite(block, 1, to_read, stdout);
+                            bytes_remaining -= to_read;
+                        }
+
+                        free(indirect_block);
+                    }
+
+                    free(doubly_indirect_block);
+                }
+
+                // Após imprimir o arquivo, saímos da função
+                return;
+            }
+
+            offset += entry->rec_len;
+        }
+    }
+
+    // Se chegou aqui, não encontrou o arquivo
+    printf("Arquivo '%s' não encontrado.\n", filename);
+}
+
+
+
 void shell_loop() {
     char command[128];
 
     while (1) {
-        printf("ext2shell:[/] $ ");
+        printf("ext2shell:[%s] $ ", current_path);
+
         fflush(stdout);
 
         if (!fgets(command, sizeof(command), stdin)) break;
@@ -353,12 +550,17 @@ void shell_loop() {
         } else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
             break;
         } else if (strcmp(command, "scan") == 0) {
-    scan_possible_directories();
+            scan_possible_directories();
         } else if (strncmp(command, "attr ", 5) == 0) {
-    cmd_attr(command + 5);
+            cmd_attr(command + 5);
         } else if (strcmp(command, "pwd") == 0) {
-    cmd_pwd();
-        } else {
+            cmd_pwd();
+        } else if (strncmp(command, "cd ", 3) == 0) {
+            cmd_cd(command + 3);
+        } else if (strncmp(command, "cat ", 4) == 0) {
+            cmd_cat(command + 4);
+        } 
+        else {
             printf("Comando desconhecido: %s\n", command);
         }
     }
@@ -382,7 +584,7 @@ int main(int argc, char *argv[]) {
     printf("[DEBUG] Inode 2 - i_mode: 0x%04x\n", current_inode.i_mode);
     printf("[DEBUG] Inode 2 - i_block[0]: %u\n", current_inode.i_block[0]);
 
-
+    strcpy(current_path, "/");
     shell_loop();
 
     fclose(img);
