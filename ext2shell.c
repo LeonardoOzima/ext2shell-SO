@@ -345,6 +345,12 @@ void cmd_cd(const char *dirname) {
     uint32_t block_size = get_block_size();
     char block[1024];
 
+    if (strcmp(dirname, ".") == 0) {
+    // cd . não altera o diretório atual
+    return;
+}
+
+
      // Tratamento especial para cd ..
     if (strcmp(dirname, "..") == 0) {
         if (strcmp(current_path, "/") == 0) {
@@ -422,6 +428,11 @@ void cmd_cd(const char *dirname) {
                 if (strcmp(current_path, "/") != 0)
                     strcat(current_path, "/");
                 strcat(current_path, dirname);
+                // Normaliza o caminho removendo "/." no final, se existir
+int len = strlen(current_path);
+if (len >= 2 && strcmp(current_path + len - 2, "/.") == 0) {
+    current_path[len - 2] = '\0';  // Remove os dois últimos caracteres
+}
 
                 return;
             }
@@ -843,8 +854,84 @@ printf("  i_block[0]: %u\n", check_inode.i_block[0]);
 printf("Inode %d escrito no disco!\n", free_inode);
 
 add_dir_entry(current_inode_num, free_inode, filename, 1);  // 2 = inode do diretório root, 1 = arquivo regular
+}
 
-    // Em breve: alocar inode, marcar bitmap, escrever inode, atualizar diretório
+void cmd_mkdir(const char *dirname) {
+    if (file_exists_in_current_dir(dirname)) {
+        printf("Erro: o diretório '%s' já existe.\n", dirname);
+        return;
+    }
+
+    printf("Diretório '%s' não existe. Criando...\n", dirname);
+
+    int free_inode = find_free_inode();
+    if (free_inode == -1) {
+        printf("Erro: nenhum inode livre.\n");
+        return;
+    }
+    int free_block = find_free_block();
+    if (free_block == -1) {
+        printf("Erro: nenhum bloco livre.\n");
+        return;
+    }
+
+    set_bitmap_bit(group_desc.bg_inode_bitmap, free_inode - 1, 1);
+    set_bitmap_bit(group_desc.bg_block_bitmap, free_block - 1, 1);
+
+    superblock.s_free_inodes_count--;
+    group_desc.bg_free_inodes_count--;
+    superblock.s_free_blocks_count--;
+    group_desc.bg_free_blocks_count--;
+
+    fseek(img, 1024, SEEK_SET);
+    fwrite(&superblock, sizeof(superblock), 1, img);
+
+    uint32_t block_size = get_block_size();
+    uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
+    fseek(img, gdt_offset, SEEK_SET);
+    fwrite(&group_desc, sizeof(group_desc), 1, img);
+
+    struct ext2_inode new_inode;
+    memset(&new_inode, 0, sizeof(new_inode));
+    new_inode.i_mode = 0x41ED; // diretório 0755
+    new_inode.i_size = block_size;
+    new_inode.i_blocks = block_size / 512;
+    new_inode.i_block[0] = free_block;
+    new_inode.i_links_count = 2; // "." + referencia do pai
+    new_inode.i_ctime = new_inode.i_mtime = new_inode.i_atime = time(NULL);
+
+    // Criar entradas . e ..
+    uint8_t dir_block[block_size];
+    memset(dir_block, 0, block_size);
+
+    struct ext2_dir_entry *dot = (struct ext2_dir_entry *)dir_block;
+    dot->inode = free_inode;
+    dot->name_len = 1;
+    dot->rec_len = dir_entry_size(1);
+    dot->file_type = EXT2_FT_DIR;
+    memcpy(dot->name, ".", 1);
+
+    struct ext2_dir_entry *dotdot = (struct ext2_dir_entry *)(dir_block + dot->rec_len);
+    dotdot->inode = current_inode_num;
+    dotdot->name_len = 2;
+    dotdot->rec_len = block_size - dot->rec_len;
+    dotdot->file_type = EXT2_FT_DIR;
+    memcpy(dotdot->name, "..", 2);
+
+    fseek(img, free_block * block_size, SEEK_SET);
+    fwrite(dir_block, 1, block_size, img);
+
+    write_inode(free_inode, &new_inode);
+
+    add_dir_entry(current_inode_num, free_inode, dirname, EXT2_FT_DIR);
+
+    // Atualizar i_links_count do diretório pai
+    struct ext2_inode parent_inode;
+    read_inode(current_inode_num, &parent_inode);
+    parent_inode.i_links_count++;
+    write_inode(current_inode_num, &parent_inode);
+
+    printf("Diretório '%s' criado com inode %d e bloco %d.\n", dirname, free_inode, free_block);
 }
 
 
@@ -876,6 +963,10 @@ void shell_loop() {
     else if (strncmp(command, "cd ", 3) == 0) {
     cmd_cd(command + 3);
 }
+else if (strncmp(command, "mkdir ", 6) == 0) {
+    cmd_mkdir(command + 6);
+}
+
 else if (strncmp(command, "touch ", 6) == 0) {
     cmd_touch(command + 6);
 }
