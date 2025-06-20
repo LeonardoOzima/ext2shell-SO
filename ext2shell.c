@@ -132,7 +132,6 @@ uint16_t dir_entry_size(uint8_t name_len) {
     return (8 /* tamanho fixo até o name */ + name_len + 3) & ~3; // arredonda para múltiplo de 4
 }
 
-
 uint32_t get_block_size() {
     return 1024; // fixo conforme especificação
 }
@@ -175,7 +174,6 @@ void read_inode(uint32_t inode_num, struct ext2_inode *inode_out) {
     fseek(img, inode_offset, SEEK_SET);
     fread(inode_out, inode_size, 1, img);
 }
-
 
 void cmd_info() {
     uint32_t block_size = get_block_size();
@@ -255,7 +253,6 @@ void get_permission_string(uint16_t mode, uint8_t file_type, char *out) {
     out[9] = (mode & 0001) ? 'x' : '-';
     out[10] = '\0';
 }
-
 
 void scan_possible_directories() {
     printf("== Verificando inodes 2 a 50 ==\n");
@@ -444,7 +441,6 @@ if (len >= 2 && strcmp(current_path + len - 2, "/.") == 0) {
     printf("Diretório '%s' não encontrado.\n", dirname);
 }
 
-
 void cmd_cat(const char *filename) {
     uint32_t block_size = get_block_size();
     char block[1024];
@@ -569,7 +565,6 @@ int find_free_block() {
     return -1;
 }
 
-
 int find_free_inode() {
     int BLOCK_SIZE = get_block_size();
     uint8_t bitmap[BLOCK_SIZE];
@@ -595,7 +590,6 @@ int find_free_inode() {
     printf("Erro: nenhum inode livre disponível.\n");
     return -1;
 }
-
 
 int file_exists_in_current_dir(const char *filename) {
     uint32_t block_size = get_block_size();
@@ -756,8 +750,6 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char* n
     }
 }
 
-
-
 void cmd_touch(const char *filename) {
     if (file_exists_in_current_dir(filename)) {
         printf("Erro: o arquivo '%s' já existe.\n", filename);
@@ -854,6 +846,8 @@ printf("  i_block[0]: %u\n", check_inode.i_block[0]);
 printf("Inode %d escrito no disco!\n", free_inode);
 
 add_dir_entry(current_inode_num, free_inode, filename, 1);  // 2 = inode do diretório root, 1 = arquivo regular
+
+    // Em breve: alocar inode, marcar bitmap, escrever inode, atualizar diretório
 }
 
 void cmd_mkdir(const char *dirname) {
@@ -934,6 +928,182 @@ void cmd_mkdir(const char *dirname) {
     printf("Diretório '%s' criado com inode %d e bloco %d.\n", dirname, free_inode, free_block);
 }
 
+void cmd_rm_rmdir(const char *name, int is_dir) {
+    uint32_t block_size = get_block_size();
+    uint8_t block[block_size];
+    uint32_t found_inode = 0;
+    struct ext2_inode target_inode;
+
+    printf("[DEBUG] Procurando por '%s' no diretório atual (inode %u)...\n", name, current_inode_num);
+
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+        uint32_t block_num = current_inode.i_block[b];
+        if (fseek(img, block_num * block_size, SEEK_SET) != 0) {
+            perror("[ERRO] fseek no bloco do diretório");
+            return;
+        }
+        if (fread(block, block_size, 1, img) != 1) {
+            perror("[ERRO] fread no bloco do diretório");
+            return;
+        }
+
+        uint32_t offset = 0;
+        struct ext2_dir_entry *prev_entry = NULL;
+
+        while (offset < block_size) {
+            struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+
+            if (entry->inode == 0 || entry->rec_len < 8) break;
+
+            char entry_name[256] = {0};
+            memcpy(entry_name, entry->name, entry->name_len);
+            entry_name[entry->name_len] = '\0';
+
+            if (strcmp(entry_name, name) == 0) {
+                found_inode = entry->inode;
+                printf("[DEBUG] Entrada '%s' encontrada! inode = %u, file_type = %u\n", name, found_inode, entry->file_type);
+
+                read_inode(found_inode, &target_inode);
+
+                // Verificação do tipo
+                if (is_dir && entry->file_type != EXT2_FT_DIR) {
+                    printf("Erro: '%s' não é um diretório.\n", name);
+                    return;
+                }
+                if (!is_dir && entry->file_type != EXT2_FT_REG_FILE) {
+                    printf("Erro: '%s' não é um arquivo.\n", name);
+                    return;
+                }
+
+                // Se diretório, verificar vazio (apenas . e ..)
+                if (is_dir) {
+                    int is_empty = 1;
+                    uint8_t dir_block[block_size];
+                    for (int db = 0; db < 12 && target_inode.i_block[db] != 0; db++) {
+                        if (fseek(img, target_inode.i_block[db] * block_size, SEEK_SET) != 0) {
+                            perror("[ERRO] fseek bloco do diretório alvo");
+                            return;
+                        }
+                        if (fread(dir_block, block_size, 1, img) != 1) {
+                            perror("[ERRO] fread bloco do diretório alvo");
+                            return;
+                        }
+
+                        uint32_t doffset = 0;
+                        while (doffset < block_size) {
+                            struct ext2_dir_entry *dent = (struct ext2_dir_entry *)(dir_block + doffset);
+                            if (dent->inode != 0 && dent->name_len > 0) {
+                                char dname[256] = {0};
+                                memcpy(dname, dent->name, dent->name_len);
+                                dname[dent->name_len] = '\0';
+
+                                if (strcmp(dname, ".") != 0 && strcmp(dname, "..") != 0) {
+                                    is_empty = 0;
+                                    break;
+                                }
+                            }
+                            doffset += dent->rec_len;
+                        }
+                        if (!is_empty) break;
+                    }
+                    if (!is_empty) {
+                        printf("Erro: diretório '%s' não está vazio.\n", name);
+                        return;
+                    }
+                }
+
+                // Remover entrada do diretório atual
+                printf("[DEBUG] Removendo entrada '%s' do bloco %u\n", name, block_num);
+                if (prev_entry != NULL) {
+                    prev_entry->rec_len += entry->rec_len;
+                    printf("[DEBUG] Ajustado rec_len da entrada anterior para %u\n", prev_entry->rec_len);
+                } else {
+                    // Se for a primeira entrada, marcar inode=0 e limpar nome e tipo
+                    entry->inode = 0;
+                    entry->name_len = 0;
+                    entry->file_type = 0;
+                    memset(entry->name, 0, 255);
+                    printf("[DEBUG] Entrada removida marcando inode=0 e limpando nome\n");
+                }
+
+                if (fseek(img, block_num * block_size, SEEK_SET) != 0) {
+                    perror("[ERRO] fseek para escrever bloco do diretório");
+                    return;
+                }
+                if (fwrite(block, block_size, 1, img) != 1) {
+                    perror("[ERRO] fwrite bloco do diretório");
+                    return;
+                }
+
+                // Atualizar i_links_count
+                if (target_inode.i_links_count == 0) {
+                    printf("[WARN] inode %u já tem i_links_count = 0\n", found_inode);
+                }
+                if (target_inode.i_links_count > 0) {
+                    target_inode.i_links_count--;
+                }
+                printf("[DEBUG] inode %u: i_links_count agora = %u\n", found_inode, target_inode.i_links_count);
+
+                write_inode(found_inode, &target_inode);
+
+                // Liberar recursos se não houver mais links
+                if (target_inode.i_links_count == 0) {
+                    for (int i = 0; i < 12 && target_inode.i_block[i] != 0; i++) {
+                        uint32_t blk = target_inode.i_block[i];
+                        set_bitmap_bit(group_desc.bg_block_bitmap, blk - 1, 0);
+                        superblock.s_free_blocks_count++;
+                        group_desc.bg_free_blocks_count++;
+                        printf("[DEBUG] Bloco %u liberado\n", blk);
+                    }
+
+                    set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
+                    superblock.s_free_inodes_count++;
+                    group_desc.bg_free_inodes_count++;
+                    printf("[DEBUG] Inode %u liberado\n", found_inode);
+                }
+
+                // Atualizar timestamps e tamanho do diretório atual
+                time_t now = time(NULL);
+                current_inode.i_mtime = now;
+                current_inode.i_ctime = now;
+                // Ajuste simples do tamanho do diretório (subtrai tamanho da entrada)
+                current_inode.i_size -= entry->rec_len;
+                printf("[DEBUG] Diretório atual inode %u i_size atualizado para %u bytes\n", current_inode_num, current_inode.i_size);
+
+                write_inode(current_inode_num, &current_inode);
+                printf("[DEBUG] Inode do diretório atual %u atualizado no disco\n", current_inode_num);
+
+                // Gravar superbloco e group descriptor atualizados
+                if (fseek(img, 1024, SEEK_SET) != 0) {
+                    perror("[ERRO] fseek superbloco");
+                    return;
+                }
+                if (fwrite(&superblock, sizeof(superblock), 1, img) != 1) {
+                    perror("[ERRO] fwrite superbloco");
+                    return;
+                }
+
+                uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
+                if (fseek(img, gdt_offset, SEEK_SET) != 0) {
+                    perror("[ERRO] fseek group descriptor");
+                    return;
+                }
+                if (fwrite(&group_desc, sizeof(group_desc), 1, img) != 1) {
+                    perror("[ERRO] fwrite group descriptor");
+                    return;
+                }
+
+                printf("Remoção de '%s' concluída com sucesso.\n", name);
+                return;
+            }
+
+            prev_entry = entry;
+            offset += entry->rec_len;
+        }
+    }
+
+    printf("Erro: entrada '%s' não encontrada no diretório atual.\n", name);
+}
 
 void shell_loop() {
     char command[128];
@@ -973,6 +1143,24 @@ else if (strncmp(command, "touch ", 6) == 0) {
     else if (strncmp(command, "cat ", 4) == 0) {
     cmd_cat(command + 4);
 }
+else if (strncmp(command, "rm ", 3) == 0) {
+    const char *filename = command + 3;
+    if (strlen(filename) == 0) {
+        printf("Uso: rm <arquivo>\n");
+    } else {
+        cmd_rm_rmdir(filename, 0);  // 0 = arquivo
+    }
+}
+else if (strncmp(command, "rmdir ", 6) == 0) {
+    const char *dirname = command + 6;
+    if (strlen(dirname) == 0) {
+        printf("Uso: rmdir <diretório>\n");
+    } else {
+        cmd_rm_rmdir(dirname, 1);  // 1 = diretório
+    }
+}
+
+
 
 
  else {
