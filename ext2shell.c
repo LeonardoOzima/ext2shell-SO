@@ -127,6 +127,12 @@ FILE *img = NULL;
 
 char current_path[1024] = "/";
 
+//Função para calcular o tamanho da entrada no diretório (deve ser múltiplo de 4 bytes)
+uint16_t dir_entry_size(uint8_t name_len) {
+    return (8 /* tamanho fixo até o name */ + name_len + 3) & ~3; // arredonda para múltiplo de 4
+}
+
+
 uint32_t get_block_size() {
     return 1024; // fixo conforme especificação
 }
@@ -529,6 +535,317 @@ void cmd_cat(const char *filename) {
     printf("Arquivo '%s' não encontrado.\n", filename);
 }
 
+int find_free_block() {
+    int BLOCK_SIZE = get_block_size();
+    uint32_t block_bitmap_block = group_desc.bg_block_bitmap;
+    uint8_t bitmap[BLOCK_SIZE];
+
+    // Lê o bloco do bitmap de blocos
+    fseek(img, block_bitmap_block * BLOCK_SIZE, SEEK_SET);
+    fread(bitmap, 1, BLOCK_SIZE, img);
+
+    for (int byte = 0; byte < BLOCK_SIZE; byte++) {
+        for (int bit = 0; bit < 8; bit++) {
+            if (!(bitmap[byte] & (1 << bit))) {
+                int bloco_livre = byte * 8 + bit + 1; // +1 pois EXT2 começa em bloco 1
+                printf("[DEBUG] Bloco livre encontrado: %d\n", bloco_livre);
+                return bloco_livre;
+            }
+        }
+    }
+
+    printf("Erro: Nenhum bloco livre disponível!\n");
+    return -1;
+}
+
+
+int find_free_inode() {
+    int BLOCK_SIZE = get_block_size();
+    uint8_t bitmap[BLOCK_SIZE];
+
+    // Le o bloco do bitmap de inodes
+    fseek(img, BLOCK_SIZE * group_desc.bg_inode_bitmap, SEEK_SET);
+    fread(bitmap, 1, BLOCK_SIZE, img);
+
+    // Total de inodes por grupo
+    int inodes_per_group = superblock.s_inodes_per_group;
+
+    for (int i = 0; i < inodes_per_group; i++) {
+        int byte_index = i / 8;
+        int bit_offset = i % 8;
+
+        // Verifica se o bit está 0 (livre)
+        if (!(bitmap[byte_index] & (1 << bit_offset))) {
+            printf("[DEBUG] Inode livre encontrado: %d\n", i + 1); // +1 para inode real
+            return i + 1; // Inodes começam em 1
+        }
+    }
+
+    printf("Erro: nenhum inode livre disponível.\n");
+    return -1;
+}
+
+
+int file_exists_in_current_dir(const char *filename) {
+    uint32_t block_size = get_block_size();
+    char block[1024];
+
+    for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++) {
+        uint32_t block_num = current_inode.i_block[b];
+        fseek(img, block_num * block_size, SEEK_SET);
+        fread(block, block_size, 1, img);
+
+        uint32_t offset = 0;
+        while (offset < block_size) {
+            struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(block + offset);
+
+            if (entry->inode == 0 || entry->rec_len < 8) break;
+
+            char name[256] = {0};
+            memcpy(name, entry->name, entry->name_len);
+            name[entry->name_len] = '\0';
+
+            if (strcmp(name, filename) == 0) {
+                return 1; // já existe
+            }
+
+            offset += entry->rec_len;
+        }
+    }
+
+    return 0; // não existe
+}
+
+void print_inode_bitmap(int n_bytes) {
+    // Supondo que 'inode_bitmap_block' seja o bloco onde está o bitmap de inodes (já lido)
+    // Você pode ajustar para ler diretamente do arquivo, se quiser.
+    unsigned char buffer[n_bytes];
+    int block_size = get_block_size();
+    // Seek para o bitmap de inodes no arquivo (ajuste conforme seu superbloco e grupo)
+    fseek(img, group_desc.bg_inode_bitmap * block_size, SEEK_SET);
+    fread(buffer, 1, n_bytes, img);
+
+    printf("Bitmap de inodes (primeiros %d bytes):\n", n_bytes);
+    for (int i = 0; i < n_bytes; i++) {
+        printf("Byte %2d: ", i);
+        for (int bit = 7; bit >= 0; bit--) {
+            printf("%d", (buffer[i] >> bit) & 1);
+        }
+        printf("\n");
+    }
+}
+
+void set_bitmap_bit(uint32_t block_num, int bit_index, int value) {
+    int BLOCK_SIZE = get_block_size();
+    uint8_t buffer[BLOCK_SIZE];
+    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
+    fread(buffer, 1, BLOCK_SIZE, img);
+
+    int byte_index = bit_index / 8;
+    int bit_offset = bit_index % 8;
+
+    if (value)
+        buffer[byte_index] |= (1 << bit_offset);   // seta bit
+    else
+        buffer[byte_index] &= ~(1 << bit_offset);  // limpa bit
+
+    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
+    fwrite(buffer, 1, BLOCK_SIZE, img);
+}
+
+void write_inode(uint32_t inode_num, const struct ext2_inode *inode_in) {
+    uint32_t block_size = get_block_size();
+    uint32_t inodes_per_group = superblock.s_inodes_per_group;
+    uint32_t inode_size = superblock.s_inode_size;
+
+    uint32_t group = (inode_num - 1) / inodes_per_group;
+    uint32_t index = (inode_num - 1) % inodes_per_group;
+
+    // Lê o group descriptor correto
+    struct ext2_group_desc gd;
+    uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
+    fseek(img, gdt_offset + group * sizeof(struct ext2_group_desc), SEEK_SET);
+    fread(&gd, sizeof(struct ext2_group_desc), 1, img);
+
+    uint32_t inode_table_block = gd.bg_inode_table;
+    uint32_t inode_offset = inode_table_block * block_size + index * inode_size;
+
+    // Grava o inode
+    fseek(img, inode_offset, SEEK_SET);
+    fwrite(inode_in, inode_size, 1, img);
+    fflush(img); // garante que os dados sejam realmente gravados
+}
+
+void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char* name, uint8_t file_type) {
+    uint32_t block_size = get_block_size();
+    struct ext2_inode dir_inode;
+    read_inode(dir_inode_num, &dir_inode);
+
+    uint32_t block = dir_inode.i_block[0];
+    uint8_t buffer[block_size];
+
+    fseek(img, block * block_size, SEEK_SET);
+    fread(buffer, 1, block_size, img);
+
+    uint16_t offset = 0;
+    uint16_t name_len = strlen(name);
+    uint16_t new_entry_size = dir_entry_size(name_len);
+    int inserted = 0;
+
+    while (offset < block_size) {
+        struct ext2_dir_entry* entry = (struct ext2_dir_entry*)(buffer + offset);
+        uint16_t actual_size = dir_entry_size(entry->name_len);
+        uint16_t space_left = entry->rec_len - actual_size;
+
+        if (space_left >= new_entry_size) {
+            // Atualiza rec_len da entrada atual
+            entry->rec_len = actual_size;
+
+            // Nova entrada começa logo depois
+            struct ext2_dir_entry* new_entry = (struct ext2_dir_entry*)(buffer + offset + actual_size);
+            new_entry->inode = new_inode_num;
+            new_entry->name_len = name_len;
+            new_entry->file_type = file_type;
+            new_entry->rec_len = space_left;
+            memcpy(new_entry->name, name, name_len);
+
+            inserted = 1;
+            break;
+        }
+
+        offset += entry->rec_len;
+    }
+
+    // Caso nenhuma entrada tivesse espaço, colocamos no final do bloco
+    if (!inserted && (offset + new_entry_size <= block_size)) {
+        struct ext2_dir_entry* new_entry = (struct ext2_dir_entry*)(buffer + offset);
+        new_entry->inode = new_inode_num;
+        new_entry->name_len = name_len;
+        new_entry->file_type = file_type;
+        new_entry->rec_len = block_size - offset;
+        memcpy(new_entry->name, name, name_len);
+        inserted = 1;
+    }
+
+    if (inserted) {
+        // Escreve o bloco atualizado
+        fseek(img, block * block_size, SEEK_SET);
+        fwrite(buffer, 1, block_size, img);
+
+        // Atualiza inode do diretório
+        printf("[DEBUG] Diretório pai (inode %u) antigo tamanho: %u bytes\n", dir_inode_num, dir_inode.i_size);
+        dir_inode.i_size += new_entry_size;
+        dir_inode.i_mtime = dir_inode.i_ctime = time(NULL);
+        write_inode(dir_inode_num, &dir_inode);
+        printf("[DEBUG] Diretório pai (inode %u) atualizado com novo tamanho: %u bytes\n", dir_inode_num, dir_inode.i_size);
+
+        printf("Entrada '%s' adicionada ao diretório inode %u\n", name, dir_inode_num);
+    } else {
+        printf("Erro: espaço insuficiente no bloco do diretório para adicionar '%s'\n", name);
+    }
+}
+
+
+
+void cmd_touch(const char *filename) {
+    if (file_exists_in_current_dir(filename)) {
+        printf("Erro: o arquivo '%s' já existe.\n", filename);
+        return;
+    }
+
+    printf("Arquivo '%s' não existe. (Simulação de criação aqui!)\n", filename);
+    int free_inode = find_free_inode();
+if (free_inode == -1) {
+    printf("Erro: nenhum inode livre.\n");
+    return;
+}
+printf("Pronto para usar inode %d!\n", free_inode);
+
+int free_block = find_free_block();
+if (free_block == -1) {
+    printf("Erro: nenhum bloco livre disponível.\n");
+    return;
+}
+printf("Pronto para usar bloco %d!\n", free_block);
+
+printf("[DEBUG] inode_bitmap_block: %u\n", group_desc.bg_inode_bitmap);
+printf("[DEBUG] block_bitmap_block: %u\n", group_desc.bg_block_bitmap);
+
+set_bitmap_bit(group_desc.bg_inode_bitmap, free_inode - 1, 1); // Marca inode como usado
+
+set_bitmap_bit(group_desc.bg_block_bitmap, free_block - 1, 1); // Marca bloco como usado
+
+// Mostrar valores antes
+printf("[DEBUG] Inodes livres (antes): Superbloco = %u, GroupDesc = %u\n",
+       superblock.s_free_inodes_count, group_desc.bg_free_inodes_count);
+
+// Atualizar contadores de inodes
+superblock.s_free_inodes_count--;
+group_desc.bg_free_inodes_count--;
+
+printf("[DEBUG] Inodes livres (depois): Superbloco = %u, GroupDesc = %u\n",
+       superblock.s_free_inodes_count, group_desc.bg_free_inodes_count);
+
+// Reescrever superbloco
+fseek(img, 1024, SEEK_SET);
+fwrite(&superblock, sizeof(superblock), 1, img);
+
+// Reescrever group descriptor (já está feito mais abaixo, então você pode remover o duplicado)
+
+// Mostrar valores antes
+printf("[DEBUG] Blocos livres (antes): Superbloco = %u, GroupDesc = %u\n",
+       superblock.s_free_blocks_count, group_desc.bg_free_blocks_count);
+
+// Atualizar contadores
+superblock.s_free_blocks_count--;
+group_desc.bg_free_blocks_count--;
+
+// Reescrever superbloco
+fseek(img, 1024, SEEK_SET); // Superbloco sempre começa no offset 1024
+fwrite(&superblock, sizeof(superblock), 1, img);
+
+// Reescrever group descriptor (primeiro grupo)
+uint32_t block_size = get_block_size();
+uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
+fseek(img, gdt_offset, SEEK_SET);
+fwrite(&group_desc, sizeof(group_desc), 1, img);
+
+// Mostrar valores depois
+printf("[DEBUG] Blocos livres (depois): Superbloco = %u, GroupDesc = %u\n",
+       superblock.s_free_blocks_count, group_desc.bg_free_blocks_count);
+
+
+struct ext2_inode new_inode;
+memset(&new_inode, 0, sizeof(new_inode));  // zera tudo
+
+new_inode.i_mode = 0x81A4;  // regular file com permissão 644
+new_inode.i_size = 0;
+new_inode.i_blocks = 0;     // número de blocos de disco (não é i_block[])
+new_inode.i_block[0] = free_block;  // o bloco que você encontrou
+new_inode.i_links_count = 1;
+new_inode.i_ctime = new_inode.i_mtime = new_inode.i_atime = time(NULL);
+
+// Grava no disco
+write_inode(free_inode, &new_inode);
+
+printf("Inode %d escrito no disco!\n", free_inode);
+
+// Ler o inode de volta do disco para checar
+struct ext2_inode check_inode;
+read_inode(free_inode, &check_inode);
+
+// Mostrar informações para confirmar
+printf("[DEBUG] Confirmação do inode %d:\n", free_inode);
+printf("  i_mode: 0x%04x\n", check_inode.i_mode);
+printf("  i_size: %u\n", check_inode.i_size);
+printf("  i_block[0]: %u\n", check_inode.i_block[0]);
+
+printf("Inode %d escrito no disco!\n", free_inode);
+
+add_dir_entry(current_inode_num, free_inode, filename, 1);  // 2 = inode do diretório root, 1 = arquivo regular
+
+    // Em breve: alocar inode, marcar bitmap, escrever inode, atualizar diretório
+}
 
 
 void shell_loop() {
@@ -549,18 +866,25 @@ void shell_loop() {
             cmd_ls();
         } else if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
             break;
-        } else if (strcmp(command, "scan") == 0) {
-            scan_possible_directories();
-        } else if (strncmp(command, "attr ", 5) == 0) {
-            cmd_attr(command + 5);
-        } else if (strcmp(command, "pwd") == 0) {
-            cmd_pwd();
-        } else if (strncmp(command, "cd ", 3) == 0) {
-            cmd_cd(command + 3);
-        } else if (strncmp(command, "cat ", 4) == 0) {
-            cmd_cat(command + 4);
-        } 
-        else {
+            } else if (strcmp(command, "scan") == 0) {
+    scan_possible_directories();
+
+        }else if (strncmp(command, "attr ", 5) == 0) {
+    cmd_attr(command + 5);
+}else if (strcmp(command, "pwd") == 0) {
+    cmd_pwd();}
+    else if (strncmp(command, "cd ", 3) == 0) {
+    cmd_cd(command + 3);
+}
+else if (strncmp(command, "touch ", 6) == 0) {
+    cmd_touch(command + 6);
+}
+    else if (strncmp(command, "cat ", 4) == 0) {
+    cmd_cat(command + 4);
+}
+
+
+ else {
             printf("Comando desconhecido: %s\n", command);
         }
     }
@@ -572,7 +896,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    img = fopen(argv[1], "rb");
+    img = fopen(argv[1], "r+b");
     if (!img) {
         perror("Erro ao abrir imagem");
         return 1;
@@ -585,6 +909,8 @@ int main(int argc, char *argv[]) {
     printf("[DEBUG] Inode 2 - i_block[0]: %u\n", current_inode.i_block[0]);
 
     strcpy(current_path, "/");
+    print_inode_bitmap(8);  // imprime os primeiros 8 bytes (64 inodes)
+
     shell_loop();
 
     fclose(img);
