@@ -658,6 +658,31 @@ void set_bitmap_bit(uint32_t block_num, int bit_index, int value) {
     fwrite(buffer, 1, BLOCK_SIZE, img);
 }
 
+int get_all_data_blocks(struct ext2_inode* inode, uint32_t* blocks, int max_blocks) {
+    uint32_t bs = get_block_size();
+    int count = 0;
+
+    // Diretos (i_block[0] a i_block[11])
+    for (int i = 0; i < 12 && count < max_blocks; i++) {
+        if (inode->i_block[i] != 0) {
+            blocks[count++] = inode->i_block[i];
+        }
+    }
+
+    // Indireto simples (i_block[12])
+    if (inode->i_block[12] != 0 && count < max_blocks) {
+        uint32_t indirect[bs / sizeof(uint32_t)];
+        fseek(img, inode->i_block[12] * bs, SEEK_SET);
+        fread(indirect, sizeof(uint32_t), bs / sizeof(uint32_t), img);
+
+        for (int i = 0; i < bs / sizeof(uint32_t) && indirect[i] != 0 && count < max_blocks; i++) {
+            blocks[count++] = indirect[i];
+        }
+    }
+
+    return count;
+}
+
 void write_inode(uint32_t inode_num, const struct ext2_inode *inode_in) {
     uint32_t block_size = get_block_size();
     uint32_t inodes_per_group = superblock.s_inodes_per_group;
@@ -1105,6 +1130,105 @@ void cmd_rm_rmdir(const char *name, int is_dir) {
     printf("Erro: entrada '%s' não encontrada no diretório atual.\n", name);
 }
 
+void cmd_rename(uint32_t dir_inode_num, const char* old_name, const char* new_name) {
+    uint32_t bs = get_block_size();
+    struct ext2_inode dir_inode;
+    read_inode(dir_inode_num, &dir_inode);
+
+    uint32_t blocks[256];
+    int num_blocks = get_all_data_blocks(&dir_inode, blocks, 256);
+
+    uint32_t target_inode = 0;
+    uint8_t file_type = 0;
+    uint16_t needed = dir_entry_size(strlen(new_name));
+    int renamed = 0;
+
+    // Primeira passada: procurar e remover se necessário
+    for (int b = 0; b < num_blocks; b++) {
+        uint8_t buffer[bs];
+        fseek(img, blocks[b] * bs, SEEK_SET);
+        fread(buffer, 1, bs, img);
+
+        uint16_t offset = 0;
+        struct ext2_dir_entry* prev = NULL;
+
+        while (offset < bs) {
+            struct ext2_dir_entry* entry = (struct ext2_dir_entry*)(buffer + offset);
+
+            if (entry->inode != 0 &&
+                strncmp(entry->name, old_name, entry->name_len) == 0 &&
+                strlen(old_name) == entry->name_len) {
+
+                if (needed <= entry->rec_len) {
+                    // Renomeia direto
+                    memset(entry->name, 0, entry->name_len);
+                    memcpy(entry->name, new_name, strlen(new_name));
+                    entry->name_len = strlen(new_name);
+
+                    fseek(img, blocks[b] * bs, SEEK_SET);
+                    fwrite(buffer, 1, bs, img);
+                    printf("[DEBUG] Renomeado '%s' para '%s' diretamente.\n", old_name, new_name);
+                    return;
+                } else {
+                    // Salvar infos para reinserção
+                    target_inode = entry->inode;
+                    file_type = entry->file_type;
+
+                    if (prev)
+                        prev->rec_len += entry->rec_len;
+                    else
+                        entry->inode = 0;  // marca como removido
+
+                    fseek(img, blocks[b] * bs, SEEK_SET);
+                    fwrite(buffer, 1, bs, img);
+                    break;  // vamos reinserir depois
+                }
+            }
+
+            prev = entry;
+            offset += entry->rec_len;
+        }
+
+        if (target_inode) break;
+    }
+
+    if (!target_inode) {
+        printf("Erro: entrada '%s' não encontrada.\n", old_name);
+        return;
+    }
+
+    // Segunda passada: tentar reutilizar entrada com inode == 0
+    for (int b = 0; b < num_blocks; b++) {
+        uint8_t buffer[bs];
+        fseek(img, blocks[b] * bs, SEEK_SET);
+        fread(buffer, 1, bs, img);
+
+        uint16_t offset = 0;
+        while (offset < bs) {
+            struct ext2_dir_entry* entry = (struct ext2_dir_entry*)(buffer + offset);
+
+            if (entry->inode == 0 && entry->rec_len >= needed) {
+                entry->inode = target_inode;
+                entry->file_type = file_type;
+                entry->name_len = strlen(new_name);
+                memcpy(entry->name, new_name, strlen(new_name));
+
+                fseek(img, blocks[b] * bs, SEEK_SET);
+                fwrite(buffer, 1, bs, img);
+                printf("[DEBUG] Renomeado '%s' para '%s' reutilizando entrada vazia.\n", old_name, new_name);
+                return;
+            }
+
+            offset += entry->rec_len;
+        }
+    }
+
+    // Se não achou espaço, insere no final
+    add_dir_entry(dir_inode_num, target_inode, new_name, file_type);
+    printf("[DEBUG] Renomeado '%s' para '%s' via reinserção.\n", old_name, new_name);
+}
+
+
 void shell_loop() {
     char command[128];
 
@@ -1135,6 +1259,14 @@ void shell_loop() {
 }
 else if (strncmp(command, "mkdir ", 6) == 0) {
     cmd_mkdir(command + 6);
+}
+else if (strncmp(command, "rename ", 7) == 0) {
+    char old_name[256], new_name[256];
+    if (sscanf(command + 7, "%255s %255s", old_name, new_name) == 2) {
+        cmd_rename(current_inode_num, old_name, new_name);
+    } else {
+        printf("Uso: rename <nome_antigo> <nome_novo>\n");
+    }
 }
 
 else if (strncmp(command, "touch ", 6) == 0) {
@@ -1168,6 +1300,8 @@ else if (strncmp(command, "rmdir ", 6) == 0) {
         }
     }
 }
+
+
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
