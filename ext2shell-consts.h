@@ -14,4 +14,9 @@
 #define EXT2_FT_SOCK 6
 #define EXT2_FT_SYMLINK 7
 
+#define GREEN "\x1b[32m"
+#define MAGENTA "\x1b[35m"
+#define RESET "\x1b[0m"
+#define YELLOW "\x1b[33m"
+
 #endif

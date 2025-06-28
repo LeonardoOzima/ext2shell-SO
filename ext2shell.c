@@ -1004,7 +1004,7 @@ void shell_loop()
 
     while (1)
     {
-        printf("ext2shell:[%s] $ ", current_path);
+        printf(GREEN "ext2shell:" YELLOW "[%s] " MAGENTA "$ " RESET, current_path);
 
         fflush(stdout);
 
