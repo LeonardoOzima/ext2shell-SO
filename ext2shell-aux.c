@@ -50,8 +50,6 @@ void read_inode(uint32_t inode_num, struct ext2_inode *inode_out)
 
     uint32_t group = (inode_num - 1) / inodes_per_group;
     uint32_t index = (inode_num - 1) % inodes_per_group;
-
-    // ⚠️ Precisamos ler o group descriptor correto
     struct ext2_group_desc gd;
     uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
     fseek(img, gdt_offset + group * sizeof(struct ext2_group_desc), SEEK_SET);

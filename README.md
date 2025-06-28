@@ -12,7 +12,7 @@ O `ext2shell` é uma aplicação em C que simula um terminal de comandos para ac
 |------------------------|---------------------------------------------------------------------------|
 | `info`                 | Exibe informações gerais do disco e do sistema de arquivos EXT2.          |
 | `cat <file>`           | Mostra o conteúdo de um arquivo de texto.                                |
-| `attr <file | dir>`    | Exibe atributos de arquivos ou diretórios.                               |
+| `attr <file \| dir>`    | Exibe atributos de arquivos ou diretórios.                               |
 | `cd <path>`            | Altera o diretório atual.                                                 |
 | `ls`                   | Lista os arquivos/diretórios do diretório atual.                          |
 | `pwd`                  | Exibe o caminho completo do diretório atual.                              |
