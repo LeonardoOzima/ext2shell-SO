@@ -1,3 +1,14 @@
+/**
+ * Arquivo auxiliar contendo as funções auxiliares utilizadas no projeto.
+ *
+ * Data de criação: 17/06/2025
+ * Data de modificação: 28/06/2025
+ *
+ * Autores: Gabriel Craco e Leonardo Jun-Ity
+ * Professor: Rodrigo Campiolo
+ * Sistemas Operacionais - Universidade Tecnológica Federal do Paraná
+ */
+
 #include "ext2shell-consts.h"
 #include "ext2shell-aux.h"
 

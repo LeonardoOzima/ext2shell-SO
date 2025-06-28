@@ -2,8 +2,13 @@
  * Aplicação em C que simula um terminal de comandos para acessar,
  * ler e modificar arquivos dentro de um sistema de arquivos EXT2.
  *
+ * Arquivo contém as principais funções que controlam o terminal.
+ *
+ * Data de criação: 17/06/2025
+ * Data de modificação: 28/06/2025
+ *
  * Autores: Gabriel Craco e Leonardo Jun-Ity
- * Professor: Rodriogo Campiolo
+ * Professor: Rodrigo Campiolo
  * Sistemas Operacionais - Universidade Tecnológica Federal do Paraná
  */
 
@@ -49,8 +54,6 @@ void cmd_ls()
 {
     uint32_t block_size = get_block_size();
     char block[1024];
-
-    printf("[/]$> ls\n\n");
 
     for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++)
     {
