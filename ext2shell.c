@@ -2,11 +2,17 @@
  * Aplicação em C que simula um terminal de comandos para acessar,
  * ler e modificar arquivos dentro de um sistema de arquivos EXT2.
  *
+ * Arquivo contém as principais funções que controlam o terminal.
+ *
+ * Data de criação: 17/06/2025
+ * Data de modificação: 28/06/2025
+ *
  * Autores: Gabriel Craco e Leonardo Jun-Ity
- * Professor: Rodriogo Campiolo
+ * Professor: Rodrigo Campiolo
  * Sistemas Operacionais - Universidade Tecnológica Federal do Paraná
  */
 
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -49,8 +55,6 @@ void cmd_ls()
 {
     uint32_t block_size = get_block_size();
     char block[1024];
-
-    printf("[/]$> ls\n\n");
 
     for (int b = 0; b < 12 && current_inode.i_block[b] != 0; b++)
     {
@@ -276,7 +280,7 @@ void cmd_cd(const char *dirname)
         }
     }
 
-    printf("Diretório '%s' não encontrado.\n", dirname);
+    printf("diretório '%s' não encontrado.\n", dirname);
 }
 
 void cmd_cat(const char *filename)
@@ -399,7 +403,7 @@ void cmd_touch(const char *filename)
 {
     if (file_exists_in_current_dir(filename))
     {
-        printf("Erro: o arquivo '%s' já existe.\n", filename);
+        printf("erro: o arquivo '%s' já existe.\n", filename);
         return;
     }
 
@@ -407,7 +411,7 @@ void cmd_touch(const char *filename)
     int free_inode = find_free_inode();
     if (free_inode == -1)
     {
-        printf("Erro: nenhum inode livre.\n");
+        printf("erro: nenhum inode livre.\n");
         return;
     }
     printf("Pronto para usar inode %d!\n", free_inode);
@@ -415,7 +419,7 @@ void cmd_touch(const char *filename)
     int free_block = find_free_block();
     if (free_block == -1)
     {
-        printf("Erro: nenhum bloco livre disponível.\n");
+        printf("erro: nenhum bloco livre disponível.\n");
         return;
     }
     printf("Pronto para usar bloco %d!\n", free_block);
@@ -494,30 +498,28 @@ void cmd_touch(const char *filename)
     printf("Inode %d escrito no disco!\n", free_inode);
 
     add_dir_entry(current_inode_num, free_inode, filename, 1); // 2 = inode do diretório root, 1 = arquivo regular
-
-    // Em breve: alocar inode, marcar bitmap, escrever inode, atualizar diretório
 }
 
 void cmd_mkdir(const char *dirname)
 {
     if (file_exists_in_current_dir(dirname))
     {
-        printf("Erro: o diretório '%s' já existe.\n", dirname);
+        printf("erro: o diretório '%s' já existe.\n", dirname);
         return;
     }
 
-    printf("Diretório '%s' não existe. Criando...\n", dirname);
+    printf("diretório '%s' não existe. Criando...\n", dirname);
 
     int free_inode = find_free_inode();
     if (free_inode == -1)
     {
-        printf("Erro: nenhum inode livre.\n");
+        printf("erro: nenhum inode livre.\n");
         return;
     }
     int free_block = find_free_block();
     if (free_block == -1)
     {
-        printf("Erro: nenhum bloco livre.\n");
+        printf("erro: nenhum bloco livre.\n");
         return;
     }
 
@@ -577,7 +579,7 @@ void cmd_mkdir(const char *dirname)
     parent_inode.i_links_count++;
     write_inode(current_inode_num, &parent_inode);
 
-    printf("Diretório '%s' criado com inode %d e bloco %d.\n", dirname, free_inode, free_block);
+    printf("diretório '%s' criado com inode %d e bloco %d.\n", dirname, free_inode, free_block);
 }
 
 void cmd_rm_rmdir(const char *name, int is_dir)
@@ -627,12 +629,12 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                 // Verificação do tipo
                 if (is_dir && entry->file_type != EXT2_FT_DIR)
                 {
-                    printf("Erro: '%s' não é um diretório.\n", name);
+                    printf("erro: '%s' não é um diretório.\n", name);
                     return;
                 }
                 if (!is_dir && entry->file_type != EXT2_FT_REG_FILE)
                 {
-                    printf("Erro: '%s' não é um arquivo.\n", name);
+                    printf("erro: '%s' não é um arquivo.\n", name);
                     return;
                 }
 
@@ -677,7 +679,7 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                     }
                     if (!is_empty)
                     {
-                        printf("Erro: diretório '%s' não está vazio.\n", name);
+                        printf("erro: diretório '%s' não está vazio.\n", name);
                         return;
                     }
                 }
@@ -747,7 +749,7 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                 current_inode.i_ctime = now;
                 // Ajuste simples do tamanho do diretório (subtrai tamanho da entrada)
                 current_inode.i_size -= entry->rec_len;
-                printf("[DEBUG] Diretório atual inode %u i_size atualizado para %u bytes\n", current_inode_num, current_inode.i_size);
+                printf("[DEBUG] diretório atual inode %u i_size atualizado para %u bytes\n", current_inode_num, current_inode.i_size);
 
                 write_inode(current_inode_num, &current_inode);
                 printf("[DEBUG] Inode do diretório atual %u atualizado no disco\n", current_inode_num);
@@ -785,7 +787,7 @@ void cmd_rm_rmdir(const char *name, int is_dir)
         }
     }
 
-    printf("Erro: entrada '%s' não encontrada no diretório atual.\n", name);
+    printf("erro: entrada '%s' não encontrada no diretório atual.\n", name);
 }
 
 void cmd_rename(uint32_t dir_inode_num, const char *old_name, const char *new_name)
@@ -859,7 +861,7 @@ void cmd_rename(uint32_t dir_inode_num, const char *old_name, const char *new_na
 
     if (!target_inode)
     {
-        printf("Erro: entrada '%s' não encontrada.\n", old_name);
+        printf("erro: entrada '%s' não encontrada.\n", old_name);
         return;
     }
 
@@ -934,7 +936,7 @@ void cmd_cp(const char *source_path, const char *target_path)
                     return;
                 }
 
-                // 1ª tentativa: usar target_path como nome de arquivo
+                // 1 tentativa: usar target_path como nome de arquivo
                 FILE *fp = fopen(target_path, "wb");
                 if (fp)
                 {
@@ -947,7 +949,19 @@ void cmd_cp(const char *source_path, const char *target_path)
                 if (!tried_as_file)
                 {
                     // Considerar como diretório: montar full_target com nome do arquivo
-                    snprintf(full_target, sizeof(full_target), "%s/%s", target_path, source_path);
+                    // Previne "//" no caminho final
+                    size_t tlen = strlen(target_path);
+                    if (tlen > 0 && target_path[tlen - 1] == '/')
+                        snprintf(full_target, sizeof(full_target), "%s%s", target_path, source_path);
+                    else
+                        snprintf(full_target, sizeof(full_target), "%s/%s", target_path, source_path);
+                }
+
+                struct stat st;
+                if (stat(target_path, &st) == -1)
+                {
+                    printf("diretório '%s' não existe.\n", target_path);
+                    return;
                 }
 
                 // Agora sim, abrir arquivo para escrita
@@ -1056,7 +1070,14 @@ void shell_loop()
         }
         else if (strncmp(command, "mkdir ", 6) == 0)
         {
-            cmd_mkdir(command + 6);
+            if (strlen(command + 6) == 0)
+            {
+                printf("sintaxe inválida.\n");
+            }
+            else
+            {
+                cmd_mkdir(command + 6);
+            }
         }
         else if (strncmp(command, "rename ", 7) == 0)
         {
@@ -1067,24 +1088,37 @@ void shell_loop()
             }
             else
             {
-                printf("Uso: rename <nome_antigo> <nome_novo>\n");
+                printf("sintaxe inválida.\n");
             }
         }
-
         else if (strncmp(command, "touch ", 6) == 0)
         {
-            cmd_touch(command + 6);
+            if (strlen(command + 6) == 0)
+            {
+                printf("sintaxe inválida.\n");
+            }
+            else
+            {
+                cmd_touch(command + 6);
+            }
         }
         else if (strncmp(command, "cat ", 4) == 0)
         {
-            cmd_cat(command + 4);
+            if (strlen(command + 4) == 0)
+            {
+                printf("sintaxe inválida.\n");
+            }
+            else
+            {
+                cmd_cat(command + 4);
+            }
         }
         else if (strncmp(command, "rm ", 3) == 0)
         {
             const char *filename = command + 3;
             if (strlen(filename) == 0)
             {
-                printf("Uso: rm <arquivo>\n");
+                printf("sintaxe inválida.\n");
             }
             else
             {
@@ -1096,7 +1130,7 @@ void shell_loop()
             const char *dirname = command + 6;
             if (strlen(dirname) == 0)
             {
-                printf("Uso: rmdir <diretório>\n");
+                printf("sintaxe inválida.\n");
             }
             else
             {
@@ -1108,7 +1142,7 @@ void shell_loop()
             char source[256], target[256];
             if (sscanf(command + 3, "%255s %255s", source, target) != 2)
             {
-                printf("Uso: cp <source_path> <target_path>\n");
+                printf("sintaxe inválida.\n");
             }
             else
             {
@@ -1120,7 +1154,7 @@ void shell_loop()
             char source[256], target[256];
             if (sscanf(command + 3, "%255s %255s", source, target) != 2)
             {
-                printf("Uso: mv <source_path> <target_path>\n");
+                printf("sintaxe inválida.\n");
             }
             else
             {
@@ -1129,7 +1163,32 @@ void shell_loop()
         }
         else
         {
-            printf("Comando desconhecido: %s\n", command);
+            const char *known_commands[] = {
+                "info", "ls", "exit", "quit", "scan", "attr", "pwd", "cd", "mkdir", "rename", "touch", "cat", "rm", "rmdir", "cp", "mv"};
+            int is_known = 0;
+            for (size_t i = 0; i < sizeof(known_commands) / sizeof(known_commands[0]); i++)
+            {
+                size_t len = strlen(known_commands[i]);
+                if (strncmp(command, known_commands[i], len) == 0 &&
+                    (command[len] == ' ' || command[len] == '\0'))
+                {
+                    is_known = 1;
+                    break;
+                }
+            }
+
+            if (is_known)
+            {
+                printf("sintaxe inválida.\n");
+            }
+            else if (strlen(command) == 0)
+            {
+                continue;
+            }
+            else
+            {
+                printf("Comando desconhecido: %s\n", command);
+            }
         }
     }
 }
@@ -1145,7 +1204,7 @@ int main(int argc, char *argv[])
     img = fopen(argv[1], "r+b");
     if (!img)
     {
-        perror("Erro ao abrir imagem");
+        perror("erro ao abrir imagem");
         return 1;
     }
 
