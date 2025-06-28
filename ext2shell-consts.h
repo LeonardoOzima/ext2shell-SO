@@ -1,0 +1,17 @@
+#ifndef EXT2SHELL_CONSTS_H
+#define EXT2SHELL_CONSTS_H
+
+#define SUPERBLOCK_OFFSET 1024
+#define EXT2_SUPER_MAGIC 0xEF53
+#define EXT2_S_IFREG 0x8000
+
+#define EXT2_FT_UNKNOWN 0
+#define EXT2_FT_REG_FILE 1
+#define EXT2_FT_DIR 2
+#define EXT2_FT_CHRDEV 3
+#define EXT2_FT_BLKDEV 4
+#define EXT2_FT_FIFO 5
+#define EXT2_FT_SOCK 6
+#define EXT2_FT_SYMLINK 7
+
+#endif
