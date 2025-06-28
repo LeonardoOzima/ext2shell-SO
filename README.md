@@ -4,7 +4,7 @@ Este projeto implementa um shell interativo para manipular uma imagem `.img` de 
 
 ## Descrição
 
-O `ext2shell` é uma aplicação em C/C++ que simula um terminal de comandos para acessar, ler e modificar arquivos dentro de um sistema de arquivos EXT2. A execução começa no diretório raiz (`/`) da imagem e permite navegar e interagir com o conteúdo como se fosse um sistema de arquivos real.
+O `ext2shell` é uma aplicação em C que simula um terminal de comandos para acessar, ler e modificar arquivos dentro de um sistema de arquivos EXT2. A execução começa no diretório raiz (`/`) da imagem e permite navegar e interagir com o conteúdo como se fosse um sistema de arquivos real.
 
 ## ⚙Comandos suportados
 

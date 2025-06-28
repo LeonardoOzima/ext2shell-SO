@@ -1,4 +1,11 @@
-// ext2shell.c
+/**
+ * Aplicação em C que simula um terminal de comandos para acessar,
+ * ler e modificar arquivos dentro de um sistema de arquivos EXT2.
+ *
+ * Autores: Gabriel Craco e Leonardo Jun-Ity
+ * Professor: Rodriogo Campiolo
+ * Sistemas Operacionais - Universidade Tecnológica Federal do Paraná
+ */
 
 #include <stdio.h>
 #include <stdint.h>
@@ -9,7 +16,7 @@
 #include "ext2shell-aux.h"
 
 struct ext2_inode current_inode;
-uint32_t current_inode_num = 2; // root inode
+uint32_t current_inode_num = 2;
 
 struct ext2_super_block superblock;
 struct ext2_group_desc group_desc;
@@ -998,6 +1005,12 @@ void cmd_cp(const char *source_path, const char *target_path)
     printf("cp: Arquivo '%s' não encontrado.\n", source_path);
 }
 
+void cmd_mv(const char *source_path, const char *target_path)
+{
+    cmd_cp(source_path, target_path);
+    cmd_rm_rmdir(source_path, 0);
+}
+
 void shell_loop()
 {
     char command[128];
@@ -1102,7 +1115,18 @@ void shell_loop()
                 cmd_cp(source, target);
             }
         }
-
+        else if (strncmp(command, "mv ", 3) == 0)
+        {
+            char source[256], target[256];
+            if (sscanf(command + 3, "%255s %255s", source, target) != 2)
+            {
+                printf("Uso: mv <source_path> <target_path>\n");
+            }
+            else
+            {
+                cmd_mv(source, target);
+            }
+        }
         else
         {
             printf("Comando desconhecido: %s\n", command);
