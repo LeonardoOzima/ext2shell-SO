@@ -4,8 +4,11 @@
 
 
 
-*.o
-*.img
-
+*
 !*.*
 !*/
+
+.vscode
+*.img
+*.o
+*.tar.gz

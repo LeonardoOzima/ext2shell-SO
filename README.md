@@ -37,7 +37,7 @@ O `ext2shell` é uma aplicação em C/C++ que simula um terminal de comandos par
 Para rodar o shell:
 
 ```bash
-./ext2shell imagem.ext2
+./ext2shell imagem.img
 ```
 
 Você verá um prompt semelhante a:
