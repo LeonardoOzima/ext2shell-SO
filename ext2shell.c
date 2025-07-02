@@ -407,97 +407,53 @@ void cmd_touch(const char *filename)
         return;
     }
 
-    printf("Arquivo '%s' não existe. (Simulação de criação aqui!)\n", filename);
+    printf("Arquivo '%s' não existe. Criando...\n", filename);
+
     int free_inode = find_free_inode();
     if (free_inode == -1)
     {
         printf("erro: nenhum inode livre.\n");
         return;
     }
-    printf("Pronto para usar inode %d!\n", free_inode);
 
-    int free_block = find_free_block();
-    if (free_block == -1)
-    {
-        printf("erro: nenhum bloco livre disponível.\n");
-        return;
-    }
-    printf("Pronto para usar bloco %d!\n", free_block);
+    set_bitmap_bit(group_desc.bg_inode_bitmap, free_inode - 1, 1);
 
-    printf("[DEBUG] inode_bitmap_block: %u\n", group_desc.bg_inode_bitmap);
-    printf("[DEBUG] block_bitmap_block: %u\n", group_desc.bg_block_bitmap);
-
-    set_bitmap_bit(group_desc.bg_inode_bitmap, free_inode - 1, 1); // Marca inode como usado
-
-    set_bitmap_bit(group_desc.bg_block_bitmap, free_block - 1, 1); // Marca bloco como usado
-
-    // Mostrar valores antes
-    printf("[DEBUG] Inodes livres (antes): Superbloco = %u, GroupDesc = %u\n",
-           superblock.s_free_inodes_count, group_desc.bg_free_inodes_count);
-
-    // Atualizar contadores de inodes
     superblock.s_free_inodes_count--;
     group_desc.bg_free_inodes_count--;
 
-    printf("[DEBUG] Inodes livres (depois): Superbloco = %u, GroupDesc = %u\n",
-           superblock.s_free_inodes_count, group_desc.bg_free_inodes_count);
-
-    // Reescrever superbloco
     fseek(img, 1024, SEEK_SET);
     fwrite(&superblock, sizeof(superblock), 1, img);
 
-    // Reescrever group descriptor (já está feito mais abaixo, então você pode remover o duplicado)
-
-    // Mostrar valores antes
-    printf("[DEBUG] Blocos livres (antes): Superbloco = %u, GroupDesc = %u\n",
-           superblock.s_free_blocks_count, group_desc.bg_free_blocks_count);
-
-    // Atualizar contadores
-    superblock.s_free_blocks_count--;
-    group_desc.bg_free_blocks_count--;
-
-    // Reescrever superbloco
-    fseek(img, 1024, SEEK_SET); // Superbloco sempre começa no offset 1024
-    fwrite(&superblock, sizeof(superblock), 1, img);
-
-    // Reescrever group descriptor (primeiro grupo)
     uint32_t block_size = get_block_size();
     uint32_t gdt_offset = (superblock.s_first_data_block + 1) * block_size;
     fseek(img, gdt_offset, SEEK_SET);
     fwrite(&group_desc, sizeof(group_desc), 1, img);
 
-    // Mostrar valores depois
-    printf("[DEBUG] Blocos livres (depois): Superbloco = %u, GroupDesc = %u\n",
-           superblock.s_free_blocks_count, group_desc.bg_free_blocks_count);
-
     struct ext2_inode new_inode;
-    memset(&new_inode, 0, sizeof(new_inode)); // zera tudo
+    memset(&new_inode, 0, sizeof(new_inode));
 
-    new_inode.i_mode = 0x81A4; // regular file com permissão 644
-    new_inode.i_size = 0;
-    new_inode.i_blocks = 0;            // número de blocos de disco (não é i_block[])
-    new_inode.i_block[0] = free_block; // o bloco que você encontrou
+    new_inode.i_mode = 0x81A4; // Arquivo regular 0644
+    new_inode.i_size = 0;      // Arquivo vazio
+    new_inode.i_blocks = 0;    // Nenhum bloco alocado
+    // i_block[] zerado
     new_inode.i_links_count = 1;
     new_inode.i_ctime = new_inode.i_mtime = new_inode.i_atime = time(NULL);
 
-    // Grava no disco
     write_inode(free_inode, &new_inode);
 
-    printf("Inode %d escrito no disco!\n", free_inode);
+    printf("Inode %d criado para arquivo '%s'\n", free_inode, filename);
 
-    // Ler o inode de volta do disco para checar
-    struct ext2_inode check_inode;
-    read_inode(free_inode, &check_inode);
+    // Adiciona entrada no diretório atual
+    add_dir_entry(current_inode_num, free_inode, filename, EXT2_FT_REG_FILE);
 
-    // Mostrar informações para confirmar
-    printf("[DEBUG] Confirmação do inode %d:\n", free_inode);
-    printf("  i_mode: 0x%04x\n", check_inode.i_mode);
-    printf("  i_size: %u\n", check_inode.i_size);
-    printf("  i_block[0]: %u\n", check_inode.i_block[0]);
+    // Atualiza links_count do diretório pai não é necessário para arquivo,
+    // mas pode atualizar timestamps se quiser:
+    struct ext2_inode parent_inode;
+    read_inode(current_inode_num, &parent_inode);
+    parent_inode.i_mtime = parent_inode.i_ctime = time(NULL);
+    write_inode(current_inode_num, &parent_inode);
 
-    printf("Inode %d escrito no disco!\n", free_inode);
-
-    add_dir_entry(current_inode_num, free_inode, filename, 1); // 2 = inode do diretório root, 1 = arquivo regular
+    printf("Arquivo '%s' criado com inode %d\n", filename, free_inode);
 }
 
 void cmd_mkdir(const char *dirname)

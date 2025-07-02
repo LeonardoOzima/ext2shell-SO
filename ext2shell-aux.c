@@ -110,7 +110,8 @@ int find_free_block()
     uint32_t block_bitmap_block = group_desc.bg_block_bitmap;
     uint8_t bitmap[BLOCK_SIZE];
 
-    // Lê o bloco do bitmap de blocos
+    uint32_t first_data_block = superblock.s_first_data_block;
+
     fseek(img, block_bitmap_block * BLOCK_SIZE, SEEK_SET);
     fread(bitmap, 1, BLOCK_SIZE, img);
 
@@ -120,14 +121,17 @@ int find_free_block()
         {
             if (!(bitmap[byte] & (1 << bit)))
             {
-                int bloco_livre = byte * 8 + bit + 1; // +1 pois EXT2 começa em bloco 1
-                printf("[DEBUG] Bloco livre encontrado: %d\n", bloco_livre);
-                return bloco_livre;
+                int bloco_livre = byte * 8 + bit + 1;
+                if (bloco_livre >= first_data_block)
+                {
+                    printf("[DEBUG] Bloco livre encontrado: %d\n", bloco_livre);
+                    return bloco_livre;
+                }
             }
         }
     }
 
-    printf("Erro: Nenhum bloco livre disponível!\n");
+    printf("Erro: Nenhum bloco livre disponível válido!\n");
     return -1;
 }
 
@@ -283,6 +287,11 @@ void write_inode(uint32_t inode_num, const struct ext2_inode *inode_in)
     fseek(img, inode_offset, SEEK_SET);
     fwrite(inode_in, inode_size, 1, img);
     fflush(img);
+
+    printf("first_data_block: %u\n", superblock.s_first_data_block);
+    printf("bg_inode_table: %u\n", group_desc.bg_inode_table);
+    printf("bg_block_bitmap: %u\n", group_desc.bg_block_bitmap);
+    printf("bg_inode_bitmap: %u\n", group_desc.bg_inode_bitmap);
 }
 
 void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *name, uint8_t file_type)
@@ -305,22 +314,42 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *n
     while (offset < block_size)
     {
         struct ext2_dir_entry *entry = (struct ext2_dir_entry *)(buffer + offset);
-        uint16_t actual_size = dir_entry_size(entry->name_len);
-        uint16_t space_left = entry->rec_len - actual_size;
 
-        if (space_left >= new_entry_size)
+        if (entry->inode == 0)
         {
-            entry->rec_len = actual_size;
+            // Entrada vazia, pode ser usada diretamente
+            if (new_entry_size <= entry->rec_len)
+            {
+                entry->inode = new_inode_num;
+                entry->name_len = name_len;
+                entry->file_type = file_type;
+                entry->rec_len = entry->rec_len; // mantém o tamanho original
+                memcpy(entry->name, name, name_len);
+                inserted = 1;
+                break;
+            }
+        }
+        else
+        {
+            uint16_t actual_size = dir_entry_size(entry->name_len);
+            uint16_t space_left = entry->rec_len - actual_size;
 
-            struct ext2_dir_entry *new_entry = (struct ext2_dir_entry *)(buffer + offset + actual_size);
-            new_entry->inode = new_inode_num;
-            new_entry->name_len = name_len;
-            new_entry->file_type = file_type;
-            new_entry->rec_len = space_left;
-            memcpy(new_entry->name, name, name_len);
+            if (space_left >= new_entry_size)
+            {
+                // Ajusta a entrada atual para seu tamanho real
+                entry->rec_len = actual_size;
 
-            inserted = 1;
-            break;
+                // Cria nova entrada logo depois
+                struct ext2_dir_entry *new_entry = (struct ext2_dir_entry *)(buffer + offset + actual_size);
+                new_entry->inode = new_inode_num;
+                new_entry->name_len = name_len;
+                new_entry->file_type = file_type;
+                new_entry->rec_len = space_left;
+                memcpy(new_entry->name, name, name_len);
+
+                inserted = 1;
+                break;
+            }
         }
 
         offset += entry->rec_len;
