@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -g
+CFLAGS = -Wall -g -fno-stack-protector
 
 PROG = ext2shell
 OBJ = ext2shell.o ext2shell-aux.o
