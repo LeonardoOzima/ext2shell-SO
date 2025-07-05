@@ -220,10 +220,25 @@ void print_inode_bitmap(int n_bytes)
 
 void set_bitmap_bit(uint32_t block_num, int bit_index, int value)
 {
+    if (block_num == 0)
+    {
+        return;
+    }
+
     int BLOCK_SIZE = get_block_size();
+
+    if (bit_index < 0 || bit_index >= BLOCK_SIZE * 8)
+    {
+        return;
+    }
+
     uint8_t buffer[BLOCK_SIZE];
-    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
-    fread(buffer, 1, BLOCK_SIZE, img);
+
+    if (fseek(img, block_num * BLOCK_SIZE, SEEK_SET) != 0 ||
+        fread(buffer, 1, BLOCK_SIZE, img) != BLOCK_SIZE)
+    {
+        return;
+    }
 
     int byte_index = bit_index / 8;
     int bit_offset = bit_index % 8;
@@ -233,8 +248,11 @@ void set_bitmap_bit(uint32_t block_num, int bit_index, int value)
     else
         buffer[byte_index] &= ~(1 << bit_offset); // limpa bit
 
-    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
-    fwrite(buffer, 1, BLOCK_SIZE, img);
+    if (fseek(img, block_num * BLOCK_SIZE, SEEK_SET) != 0 ||
+        fwrite(buffer, 1, BLOCK_SIZE, img) != BLOCK_SIZE)
+    {
+        return;
+    }
 }
 
 int get_all_data_blocks(struct ext2_inode *inode, uint32_t *blocks, int max_blocks)
@@ -385,28 +403,21 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *n
     }
 }
 
-/**
- * @brief Libera um único bloco de dados. (VERSÃO CORRIGIDA)
- * Aloca memória para zerar o bloco na HEAP para evitar stack overflow.
- */
 void free_block(uint32_t block_num)
 {
     if (block_num == 0)
         return;
 
     uint32_t block_size = get_block_size();
-    printf("[DEBUG] Liberando bloco de dados %u...\n", block_num);
 
     set_bitmap_bit(group_desc.bg_block_bitmap, block_num - 1, 0);
 
     superblock.s_free_blocks_count++;
     group_desc.bg_free_blocks_count++;
 
-    // Aloca buffer na HEAP para evitar stack overflow
     char *zeros = (char *)malloc(block_size);
     if (zeros == NULL)
     {
-        perror("[ERRO] Falha ao alocar memória para zerar bloco");
         return; // Não consegue zerar, mas o bloco foi liberado no bitmap
     }
 
@@ -416,92 +427,90 @@ void free_block(uint32_t block_num)
         fwrite(zeros, block_size, 1, img);
     }
 
-    // Libera a memória alocada na heap
     free(zeros);
 }
 
 void free_inode_blocks(struct ext2_inode *inode_to_free)
 {
+    if (!inode_to_free)
+        return;
+
     uint32_t block_size = get_block_size();
     uint32_t pointers_per_block = block_size / sizeof(uint32_t);
 
-    // Aloca buffers na HEAP
-    uint32_t *l1_block = (uint32_t *)malloc(block_size);
-    uint32_t *l2_block = (uint32_t *)malloc(block_size);
-
-    if (l1_block == NULL || l2_block == NULL)
+    uint32_t *l1_block = malloc(block_size);
+    uint32_t *l2_block = malloc(block_size);
+    if (!l1_block || !l2_block)
     {
-        perror("[ERRO] Falha ao alocar memória para ler blocos indiretos");
-        if (l1_block)
-            free(l1_block);
-        if (l2_block)
-            free(l2_block);
+        perror("[ERRO] Falha malloc");
+        free(l1_block);
+        free(l2_block);
         return;
     }
 
-    // 1. Liberar blocos duplamente indiretos (nível 2)
+    // Nivel 2: duplamente indiretos
     if (inode_to_free->i_block[13] != 0)
     {
-        printf("[DEBUG] Liberando blocos duplamente indiretos (a partir do bloco %u)\n", inode_to_free->i_block[13]);
-        fseek(img, inode_to_free->i_block[13] * block_size, SEEK_SET);
-        fread(l2_block, block_size, 1, img);
-
-        for (int i = 0; i < pointers_per_block; i++)
+        if (fseek(img, inode_to_free->i_block[13] * block_size, SEEK_SET) != 0 ||
+            fread(l2_block, block_size, 1, img) != 1)
         {
-            if (l2_block[i] != 0)
+            perror("[ERRO] fread nível 2");
+        }
+        else
+        {
+            for (uint32_t i = 0; i < pointers_per_block; i++)
             {
-                fseek(img, l2_block[i] * block_size, SEEK_SET);
-                fread(l1_block, block_size, 1, img);
-                for (int j = 0; j < pointers_per_block; j++)
+                if (l2_block[i] == 0)
+                    continue;
+
+                if (fseek(img, l2_block[i] * block_size, SEEK_SET) != 0 ||
+                    fread(l1_block, block_size, 1, img) != 1)
+                {
+                    perror("[ERRO] fread nível 1");
+                    continue;
+                }
+
+                for (uint32_t j = 0; j < pointers_per_block; j++)
                 {
                     if (l1_block[j] != 0)
                         free_block(l1_block[j]);
                 }
+
                 free_block(l2_block[i]);
             }
         }
+
         free_block(inode_to_free->i_block[13]);
     }
 
-    // 2. Liberar blocos indiretos (nível 1)
+    // Nivel 1: indiretamente apontados
     if (inode_to_free->i_block[12] != 0)
     {
-        printf("[DEBUG] Liberando blocos indiretos (a partir do bloco %u)\n", inode_to_free->i_block[12]);
-        fseek(img, inode_to_free->i_block[12] * block_size, SEEK_SET);
-        fread(l1_block, block_size, 1, img);
 
-        for (int i = 0; i < pointers_per_block; i++)
+        if (fseek(img, inode_to_free->i_block[12] * block_size, SEEK_SET) != 0 ||
+            fread(l1_block, block_size, 1, img) != 1)
         {
-            if (l1_block[i] != 0)
-                free_block(l1_block[i]);
+            perror("[ERRO] fread indiretos");
         }
+        else
+        {
+            for (uint32_t i = 0; i < pointers_per_block; i++)
+            {
+                if (l1_block[i] != 0)
+                    free_block(l1_block[i]);
+            }
+        }
+
         free_block(inode_to_free->i_block[12]);
     }
 
-    // 3. Liberar blocos diretos
-    printf("[DEBUG] Liberando blocos diretos...\n");
+    // Diretos (0 a 11)
     for (int i = 0; i < 12; i++)
     {
         if (inode_to_free->i_block[i] != 0)
             free_block(inode_to_free->i_block[i]);
     }
-    printf("[DEBUG] Blocos diretos liberados.\n");
 
-    printf("[DEBUG] Conteúdo de l1_block (primeiros 16 ponteiros):\n");
-    for (int i = 0; i < 16 && i < (int)(block_size / sizeof(uint32_t)); i++)
-    {
-        printf("  l1_block[%d] = %u\n", i, l1_block[i]);
-    }
-
-    printf("[DEBUG] Conteúdo de l2_block (primeiros 16 ponteiros):\n");
-    for (int i = 0; i < 16 && i < (int)(block_size / sizeof(uint32_t)); i++)
-    {
-        printf("  l2_block[%d] = %u\n", i, l2_block[i]);
-    }
-    printf("[DEBUG] Blocos indiretos e duplamente indiretos liberados.\n");
-
-    // Libera a memória alocada no início da função
-    free(l1_block);
-    free(l2_block);
-    printf("[DEBUG] Memória de buffers liberada.\n");
+    memset(l1_block, 0, block_size);
+    memset(l2_block, 0, block_size);
 }

@@ -692,7 +692,6 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                         return;
                     }
                     free_inode_blocks(&target_inode);
-                    printf("salve");
                     printf("[DEBUG] Blocos do inode %u liberados\n", found_inode);
 
                     set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
