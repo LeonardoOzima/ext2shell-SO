@@ -45,3 +45,15 @@ Você verá um prompt semelhante a:
 ```
 ext2shell:[/] $
 ```
+
+## Créditos e Copyright
+
+© 2025 Gabriel Craco e Leonardo Jun-Ity  
+Orientador: Professor Rodrigo Campiolo  
+Curso de Sistemas Operacionais – Universidade Tecnológica Federal do Paraná (UTFPR)  
+
+Data de criação: 17/06/2025  
+Data de modificação: 28/06/2025  
+
+Este projeto foi desenvolvido como parte das atividades acadêmicas do curso de Sistemas Operacionais da UTFPR.  
+Todos os direitos reservados aos autores acima mencionados.

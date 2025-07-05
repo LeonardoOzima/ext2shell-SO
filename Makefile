@@ -9,7 +9,7 @@ all: $(PROG)
 $(PROG): $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
-ext2shell.o: ext2shell.c ext2shell-aux.h ext2shell-consts.h
+ext2shell.o: ext2shell.h ext2shell.c ext2shell-aux.h ext2shell-consts.h
 	$(CC) $(CFLAGS) -c ext2shell.c
 
 ext2shell-aux.o: ext2shell-aux.c ext2shell-aux.h ext2shell-consts.h

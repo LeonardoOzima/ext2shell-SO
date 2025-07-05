@@ -220,10 +220,25 @@ void print_inode_bitmap(int n_bytes)
 
 void set_bitmap_bit(uint32_t block_num, int bit_index, int value)
 {
+    if (block_num == 0)
+    {
+        return;
+    }
+
     int BLOCK_SIZE = get_block_size();
+
+    if (bit_index < 0 || bit_index >= BLOCK_SIZE * 8)
+    {
+        return;
+    }
+
     uint8_t buffer[BLOCK_SIZE];
-    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
-    fread(buffer, 1, BLOCK_SIZE, img);
+
+    if (fseek(img, block_num * BLOCK_SIZE, SEEK_SET) != 0 ||
+        fread(buffer, 1, BLOCK_SIZE, img) != BLOCK_SIZE)
+    {
+        return;
+    }
 
     int byte_index = bit_index / 8;
     int bit_offset = bit_index % 8;
@@ -233,8 +248,11 @@ void set_bitmap_bit(uint32_t block_num, int bit_index, int value)
     else
         buffer[byte_index] &= ~(1 << bit_offset); // limpa bit
 
-    fseek(img, block_num * BLOCK_SIZE, SEEK_SET);
-    fwrite(buffer, 1, BLOCK_SIZE, img);
+    if (fseek(img, block_num * BLOCK_SIZE, SEEK_SET) != 0 ||
+        fwrite(buffer, 1, BLOCK_SIZE, img) != BLOCK_SIZE)
+    {
+        return;
+    }
 }
 
 int get_all_data_blocks(struct ext2_inode *inode, uint32_t *blocks, int max_blocks)
@@ -383,4 +401,116 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *n
     {
         printf("Erro: espaço insuficiente no bloco do diretório para adicionar '%s'\n", name);
     }
+}
+
+void free_block(uint32_t block_num)
+{
+    if (block_num == 0)
+        return;
+
+    uint32_t block_size = get_block_size();
+
+    set_bitmap_bit(group_desc.bg_block_bitmap, block_num - 1, 0);
+
+    superblock.s_free_blocks_count++;
+    group_desc.bg_free_blocks_count++;
+
+    char *zeros = (char *)malloc(block_size);
+    if (zeros == NULL)
+    {
+        return; // Não consegue zerar, mas o bloco foi liberado no bitmap
+    }
+
+    memset(zeros, 0, block_size);
+    if (fseek(img, block_num * block_size, SEEK_SET) == 0)
+    {
+        fwrite(zeros, block_size, 1, img);
+    }
+
+    free(zeros);
+}
+
+void free_inode_blocks(struct ext2_inode *inode_to_free)
+{
+    if (!inode_to_free)
+        return;
+
+    uint32_t block_size = get_block_size();
+    uint32_t pointers_per_block = block_size / sizeof(uint32_t);
+
+    uint32_t *l1_block = malloc(block_size);
+    uint32_t *l2_block = malloc(block_size);
+    if (!l1_block || !l2_block)
+    {
+        perror("[ERRO] Falha malloc");
+        free(l1_block);
+        free(l2_block);
+        return;
+    }
+
+    // Nivel 2: duplamente indiretos
+    if (inode_to_free->i_block[13] != 0)
+    {
+        if (fseek(img, inode_to_free->i_block[13] * block_size, SEEK_SET) != 0 ||
+            fread(l2_block, block_size, 1, img) != 1)
+        {
+            perror("[ERRO] fread nível 2");
+        }
+        else
+        {
+            for (uint32_t i = 0; i < pointers_per_block; i++)
+            {
+                if (l2_block[i] == 0)
+                    continue;
+
+                if (fseek(img, l2_block[i] * block_size, SEEK_SET) != 0 ||
+                    fread(l1_block, block_size, 1, img) != 1)
+                {
+                    perror("[ERRO] fread nível 1");
+                    continue;
+                }
+
+                for (uint32_t j = 0; j < pointers_per_block; j++)
+                {
+                    if (l1_block[j] != 0)
+                        free_block(l1_block[j]);
+                }
+
+                free_block(l2_block[i]);
+            }
+        }
+
+        free_block(inode_to_free->i_block[13]);
+    }
+
+    // Nivel 1: indiretamente apontados
+    if (inode_to_free->i_block[12] != 0)
+    {
+
+        if (fseek(img, inode_to_free->i_block[12] * block_size, SEEK_SET) != 0 ||
+            fread(l1_block, block_size, 1, img) != 1)
+        {
+            perror("[ERRO] fread indiretos");
+        }
+        else
+        {
+            for (uint32_t i = 0; i < pointers_per_block; i++)
+            {
+                if (l1_block[i] != 0)
+                    free_block(l1_block[i]);
+            }
+        }
+
+        free_block(inode_to_free->i_block[12]);
+    }
+
+    // Diretos (0 a 11)
+    for (int i = 0; i < 12; i++)
+    {
+        if (inode_to_free->i_block[i] != 0)
+            free_block(inode_to_free->i_block[i]);
+    }
+
+    memset(l1_block, 0, block_size);
+    memset(l2_block, 0, block_size);
 }

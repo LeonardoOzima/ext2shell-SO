@@ -5,7 +5,7 @@
  * Arquivo contém as principais funções que controlam o terminal.
  *
  * Data de criação: 17/06/2025
- * Data de modificação: 28/06/2025
+ * Data de modificação: 04/07/2025
  *
  * Autores: Gabriel Craco e Leonardo Jun-Ity
  * Professor: Rodrigo Campiolo
@@ -20,6 +20,7 @@
 #include <time.h>
 #include "ext2shell-consts.h"
 #include "ext2shell-aux.h"
+#include "ext2shell.h"
 
 struct ext2_inode current_inode;
 uint32_t current_inode_num = 2;
@@ -32,6 +33,7 @@ char current_path[1024] = "/";
 
 void cmd_info()
 {
+    read_superblock();
     uint32_t block_size = get_block_size();
     uint64_t image_size_bytes = (uint64_t)superblock.s_blocks_count * block_size;
     uint64_t free_space_kib = (uint64_t)superblock.s_free_blocks_count * block_size / 1024;
@@ -684,14 +686,13 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                 // Liberar recursos se não houver mais links
                 if (target_inode.i_links_count == 0)
                 {
-                    for (int i = 0; i < 12 && target_inode.i_block[i] != 0; i++)
+                    if (found_inode == 0)
                     {
-                        uint32_t blk = target_inode.i_block[i];
-                        set_bitmap_bit(group_desc.bg_block_bitmap, blk - 1, 0);
-                        superblock.s_free_blocks_count++;
-                        group_desc.bg_free_blocks_count++;
-                        printf("[DEBUG] Bloco %u liberado\n", blk);
+                        printf("[ERRO] Tentativa de liberar inode 0! Isso é inválido.\n");
+                        return;
                     }
+                    free_inode_blocks(&target_inode);
+                    printf("[DEBUG] Blocos do inode %u liberados\n", found_inode);
 
                     set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
                     superblock.s_free_inodes_count++;
