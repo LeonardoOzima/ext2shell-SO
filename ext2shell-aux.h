@@ -147,7 +147,8 @@ void set_bitmap_bit(uint32_t block_num, int bit_index, int value);
 int get_all_data_blocks(struct ext2_inode *inode, uint32_t *blocks, int max_blocks);
 
 void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *name, uint8_t file_type);
-
+void free_indirect_block(uint32_t block_num, int level, uint32_t block_size);
+void free_inode_blocks(struct ext2_inode *inode, uint32_t block_size);
 uint32_t get_block_size();
 
 #endif

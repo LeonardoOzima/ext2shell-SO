@@ -384,3 +384,84 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *n
         printf("Erro: espaço insuficiente no bloco do diretório para adicionar '%s'\n", name);
     }
 }
+
+void free_block(uint32_t block_num)
+{
+    set_bitmap_bit(group_desc.bg_block_bitmap, block_num - 1, 0);
+    superblock.s_free_blocks_count++;
+    group_desc.bg_free_blocks_count++;
+    printf("[DEBUG] Bloco %u liberado\n", block_num);
+}
+
+void free_indirect_block(uint32_t block_num, int level, uint32_t block_size)
+{
+    if (block_num == 0 || level < 1)
+        return;
+
+    uint32_t pointers_per_block = block_size / sizeof(uint32_t);
+    uint32_t *pointers = malloc(block_size);
+    if (!pointers) {
+        perror("[ERRO] malloc para bloco indireto");
+        return;
+    }
+
+    if (fseek(img, block_num * block_size, SEEK_SET) != 0 ||
+        fread(pointers, sizeof(uint32_t), pointers_per_block, img) != pointers_per_block)
+    {
+        perror("[ERRO] Ao ler bloco indireto");
+        free(pointers);
+        return;
+    }
+
+    for (uint32_t i = 0; i < pointers_per_block; i++)
+    {
+        if (pointers[i] == 0)
+            continue;
+
+        if (level == 1)
+        {
+            free_block(pointers[i]);
+        }
+        else
+        {
+            free_indirect_block(pointers[i], level - 1, block_size);
+        }
+    }
+
+    free(pointers);
+
+    free_block(block_num); // liberar o bloco de ponteiros
+}
+
+void free_inode_blocks(struct ext2_inode *inode, uint32_t block_size)
+{
+    // Blocos diretos
+    for (int i = 0; i < 12; i++)
+    {
+        if (inode->i_block[i] != 0)
+        {
+            free_block(inode->i_block[i]);
+        }
+    }
+
+    // Indireto simples
+    if (inode->i_block[12] != 0)
+    {
+        printf("[DEBUG] Liberando bloco indireto simples: %u\n", inode->i_block[12]);
+        free_indirect_block(inode->i_block[12], 1, block_size);
+    }
+
+    // Indireto duplo
+    if (inode->i_block[13] != 0)
+    {
+        printf("[DEBUG] Liberando bloco indireto duplo: %u\n", inode->i_block[13]);
+        free_indirect_block(inode->i_block[13], 2, block_size);
+    }
+
+    // Indireto triplo
+    if (inode->i_block[14] != 0)
+    {
+        printf("[DEBUG] Liberando bloco indireto triplo: %u\n", inode->i_block[14]);
+        free_indirect_block(inode->i_block[14], 3, block_size);
+    }
+}
