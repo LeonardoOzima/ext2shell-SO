@@ -245,12 +245,11 @@ void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *n
 void free_indirect_block(uint32_t block_num, int level, uint32_t block_size);
 
 /**
- * Libera todos os blocos (diretos e indiretos) associados a um inode.
+ * Libera todos os blocos associados a um inode, incluindo blocos diretos, indiretos e duplamente indiretos.
  *
  * @param inode Ponteiro para o inode cujos blocos serão liberados.
- * @param block_size Tamanho do bloco em bytes.
  */
-void free_inode_blocks(struct ext2_inode *inode, uint32_t block_size);
+void free_inode_blocks(struct ext2_inode *inode);
 
 /**
  * Retorna o tamanho do bloco usado no sistema de arquivos EXT2 da imagem.

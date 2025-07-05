@@ -686,7 +686,14 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                 // Liberar recursos se não houver mais links
                 if (target_inode.i_links_count == 0)
                 {
-                    free_inode_blocks(&target_inode, block_size);
+                    if (found_inode == 0)
+                    {
+                        printf("[ERRO] Tentativa de liberar inode 0! Isso é inválido.\n");
+                        return;
+                    }
+                    free_inode_blocks(&target_inode);
+                    printf("salve");
+                    printf("[DEBUG] Blocos do inode %u liberados\n", found_inode);
 
                     set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
                     superblock.s_free_inodes_count++;
