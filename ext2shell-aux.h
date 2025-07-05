@@ -128,27 +128,135 @@ extern struct ext2_super_block superblock;
 extern struct ext2_group_desc group_desc;
 extern struct ext2_inode current_inode;
 
-// Protótipos das funções
+/**
+ * Lê e carrega o superbloco da imagem do sistema de arquivos.
+ */
 void read_superblock();
+
+/**
+ * Lê e carrega o descritor de grupo da imagem do sistema de arquivos.
+ */
 void read_group_desc();
+
+/**
+ * Lê o inode especificado pelo número 'inode_num' e armazena em 'inode_out'.
+ *
+ * @param inode_num Número do inode a ser lido.
+ * @param inode_out Ponteiro para a estrutura onde será armazenado o inode lido.
+ */
 void read_inode(uint32_t inode_num, struct ext2_inode *inode_out);
+
+/**
+ * Escreve o inode fornecido em 'inode_in' na posição especificada por 'inode_num'.
+ *
+ * @param inode_num Número do inode a ser escrito.
+ * @param inode_in Ponteiro para a estrutura contendo os dados do inode a serem escritos.
+ */
 void write_inode(uint32_t inode_num, const struct ext2_inode *inode_in);
+
+/**
+ * Calcula o tamanho necessário para armazenar uma entrada de diretório
+ * baseado no comprimento do nome do arquivo.
+ *
+ * @param name_len Comprimento do nome do arquivo.
+ * @return Tamanho em bytes da entrada de diretório.
+ */
 uint16_t dir_entry_size(uint8_t name_len);
 
+/**
+ * Converte os bits de permissão do modo do inode em uma string legível para humanos.
+ *
+ * @param mode Campo de modo do inode.
+ * @param file_type Tipo do arquivo.
+ * @param out String de saída onde a permissão será escrita (deve ter espaço suficiente).
+ */
 void get_permission_string(uint16_t mode, uint8_t file_type, char *out);
+
+/**
+ * Escaneia os possíveis diretórios para alguma funcionalidade interna (ex: validação ou listagem).
+ */
 void scan_possible_directories();
 
+/**
+ * Busca por um bloco livre na tabela de blocos.
+ *
+ * @return Número do bloco livre encontrado ou -1 se não houver blocos livres.
+ */
 int find_free_block();
+
+/**
+ * Busca por um inode livre na tabela de inodes.
+ *
+ * @return Número do inode livre encontrado ou -1 se não houver inodes livres.
+ */
 int find_free_inode();
+
+/**
+ * Verifica se um arquivo com o nome especificado existe no diretório atual.
+ *
+ * @param filename Nome do arquivo a verificar.
+ * @return 1 se o arquivo existir, 0 caso contrário.
+ */
 int file_exists_in_current_dir(const char *filename);
+
+/**
+ * Imprime o bitmap de inodes para debug.
+ *
+ * @param n_bytes Número de bytes do bitmap a imprimir.
+ */
 void print_inode_bitmap(int n_bytes);
 
+/**
+ * Define o valor (0 ou 1) de um bit específico no bitmap de blocos.
+ *
+ * @param block_num Número do bloco referente ao bitmap.
+ * @param bit_index Índice do bit a ser alterado.
+ * @param value Valor a ser setado (0 ou 1).
+ */
 void set_bitmap_bit(uint32_t block_num, int bit_index, int value);
+
+/**
+ * Obtém todos os blocos de dados associados a um inode, preenchendo o array 'blocks'.
+ *
+ * @param inode Ponteiro para o inode.
+ * @param blocks Array para armazenar os números dos blocos encontrados.
+ * @param max_blocks Tamanho máximo do array blocks.
+ * @return Número de blocos encontrados e preenchidos no array.
+ */
 int get_all_data_blocks(struct ext2_inode *inode, uint32_t *blocks, int max_blocks);
 
+/**
+ * Adiciona uma entrada de diretório no diretório especificado pelo inode.
+ *
+ * @param dir_inode_num Número do inode do diretório onde será adicionada a entrada.
+ * @param new_inode_num Número do inode do novo arquivo/diretório a adicionar.
+ * @param name Nome do arquivo/diretório a adicionar.
+ * @param file_type Tipo do arquivo (arquivo, diretório, etc).
+ */
 void add_dir_entry(uint32_t dir_inode_num, uint32_t new_inode_num, const char *name, uint8_t file_type);
+
+/**
+ * Libera recursivamente blocos indiretos usados por um inode.
+ *
+ * @param block_num Número do bloco indireto a ser liberado.
+ * @param level Nível de indireção (1 para indireto simples, 2 para duplo, etc).
+ * @param block_size Tamanho do bloco em bytes.
+ */
 void free_indirect_block(uint32_t block_num, int level, uint32_t block_size);
+
+/**
+ * Libera todos os blocos (diretos e indiretos) associados a um inode.
+ *
+ * @param inode Ponteiro para o inode cujos blocos serão liberados.
+ * @param block_size Tamanho do bloco em bytes.
+ */
 void free_inode_blocks(struct ext2_inode *inode, uint32_t block_size);
+
+/**
+ * Retorna o tamanho do bloco usado no sistema de arquivos EXT2 da imagem.
+ *
+ * @return Tamanho do bloco em bytes.
+ */
 uint32_t get_block_size();
 
 #endif

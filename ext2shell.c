@@ -5,7 +5,7 @@
  * Arquivo contém as principais funções que controlam o terminal.
  *
  * Data de criação: 17/06/2025
- * Data de modificação: 28/06/2025
+ * Data de modificação: 04/07/2025
  *
  * Autores: Gabriel Craco e Leonardo Jun-Ity
  * Professor: Rodrigo Campiolo
@@ -20,6 +20,7 @@
 #include <time.h>
 #include "ext2shell-consts.h"
 #include "ext2shell-aux.h"
+#include "ext2shell.h"
 
 struct ext2_inode current_inode;
 uint32_t current_inode_num = 2;
@@ -683,16 +684,15 @@ void cmd_rm_rmdir(const char *name, int is_dir)
                 write_inode(found_inode, &target_inode);
 
                 // Liberar recursos se não houver mais links
-if (target_inode.i_links_count == 0)
-{
-    free_inode_blocks(&target_inode, block_size);
+                if (target_inode.i_links_count == 0)
+                {
+                    free_inode_blocks(&target_inode, block_size);
 
-    set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
-    superblock.s_free_inodes_count++;
-    group_desc.bg_free_inodes_count++;
-    printf("[DEBUG] Inode %u liberado\n", found_inode);
-}
-
+                    set_bitmap_bit(group_desc.bg_inode_bitmap, found_inode - 1, 0);
+                    superblock.s_free_inodes_count++;
+                    group_desc.bg_free_inodes_count++;
+                    printf("[DEBUG] Inode %u liberado\n", found_inode);
+                }
 
                 // Atualizar timestamps e tamanho do diretório atual
                 time_t now = time(NULL);
