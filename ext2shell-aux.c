@@ -420,10 +420,6 @@ void free_block(uint32_t block_num)
     free(zeros);
 }
 
-/**
- * @brief Libera todos os blocos de dados associados a um inode. (VERSÃO CORRIGIDA)
- * Aloca buffers para ponteiros de bloco na HEAP para evitar stack overflow.
- */
 void free_inode_blocks(struct ext2_inode *inode_to_free)
 {
     uint32_t block_size = get_block_size();
@@ -489,8 +485,23 @@ void free_inode_blocks(struct ext2_inode *inode_to_free)
         if (inode_to_free->i_block[i] != 0)
             free_block(inode_to_free->i_block[i]);
     }
+    printf("[DEBUG] Blocos diretos liberados.\n");
+
+    printf("[DEBUG] Conteúdo de l1_block (primeiros 16 ponteiros):\n");
+    for (int i = 0; i < 16 && i < (int)(block_size / sizeof(uint32_t)); i++)
+    {
+        printf("  l1_block[%d] = %u\n", i, l1_block[i]);
+    }
+
+    printf("[DEBUG] Conteúdo de l2_block (primeiros 16 ponteiros):\n");
+    for (int i = 0; i < 16 && i < (int)(block_size / sizeof(uint32_t)); i++)
+    {
+        printf("  l2_block[%d] = %u\n", i, l2_block[i]);
+    }
+    printf("[DEBUG] Blocos indiretos e duplamente indiretos liberados.\n");
 
     // Libera a memória alocada no início da função
     free(l1_block);
     free(l2_block);
+    printf("[DEBUG] Memória de buffers liberada.\n");
 }
